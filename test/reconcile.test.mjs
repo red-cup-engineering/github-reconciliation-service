@@ -97,6 +97,8 @@ const world = () => ({
   "GET /repos/o/r/commits/r1/status": { total_count: 0, state: "pending" },
   "GET /repos/o/r/compare/main...done": { ahead_by: 0 },
   "GET /repos/o/r/git/ref/heads/done": { object: { sha: "d" } },
+  "GET /repos/o/r/branches/done": { commit: { sha: "d" }, protected: false },
+  "LIST /repos/o/r/pulls?state=open&head=o%3Adone": [],
   "GET /repos/o/r/compare/main...squashed": { ahead_by: 2 },
   "GET /repos/o/r/compare/main...work": { ahead_by: 4 },
   "GET /repos/o/r/compare/main...pr-green": { ahead_by: 1 },
@@ -117,7 +119,7 @@ test("a dry run reads everything and writes nothing", async () => {
 
 test("apply merges the green pull request, deletes contained branches, closes the fixed issue, records the rest", async () => {
   const { client, writes } = fake(world());
-  const result = await reconcileRepo(client, repo, { apply: true, closeIssues: true, now: NOW });
+  const result = await reconcileRepo(client, repo, { apply: true, mergeGreenPulls:true, closeIssues: true, now: NOW });
   const sent = writes.map((w) => `${w.method} ${w.path}`);
   assert.ok(sent.includes("PUT /repos/o/r/pulls/5/merge"));
   assert.deepEqual(writes.find((w) => w.method === "PUT").body, { merge_method: "squash", sha: "g1" });
@@ -134,14 +136,71 @@ test("issue closure is opt-in and unique squashed history is preserved", async (
   const { client, writes } = fake(world());
   const result = await reconcileRepo(client, repo, { apply: true, now: NOW });
   assert.ok(!writes.some(w => w.method === "PATCH" && w.path.includes("/issues/")));
+  assert.ok(!writes.some(w => w.method === "PUT" && w.path.includes("/merge")));
   assert.ok(!writes.some(w => w.method === "DELETE" && w.path.includes("heads/squashed")));
   assert.ok(result.actions.some(a => a.kind === "delete-branch" && a.target === "done" && a.applied));
+});
+
+test("new open PR appearing after inventory blocks deletion", async () => {
+  const routes = world();
+  routes["LIST /repos/o/r/pulls?state=open&head=o%3Adone"]=[{number:99}];
+  const {client,writes}=fake(routes);
+  const result=await reconcileRepo(client,repo,{apply:true,now:NOW});
+  assert.ok(!writes.some(w=>w.method==="DELETE"));
+  assert.ok(result.debts.some(d=>d.id.includes("changed-during-reconciliation")));
+});
+
+test("moving head and acquiring protection block deletion", async () => {
+  for(const edits of [
+    {"GET /repos/o/r/branches/done": {commit:{sha:"d"},protected:true}},
+    {"GET /repos/o/r/git/ref/heads/done": {object:{sha:"later"}}},
+    {"GET /repos/o/r/branches/done": {commit:{sha:"later"},protected:false}},
+  ]){
+    const {client,writes}=fake({...world(),...edits});
+    const result=await reconcileRepo(client,repo,{apply:true,now:NOW});
+    assert.ok(!writes.some(w=>w.method==="DELETE"));
+    assert.ok(result.debts.some(d=>d.id.includes("changed-during-reconciliation")));
+  }
+});
+
+test("ahead branch is never nominated for deletion", async () => {
+  const {client,writes}=fake({...world(),
+    "GET /repos/o/r/compare/main...done":{ahead_by:1}});
+  const result=await reconcileRepo(client,repo,{apply:true,now:NOW});
+  assert.ok(!writes.some(w=>w.method==="DELETE"));
+  assert.ok(!result.actions.some(a=>a.kind==="delete-branch" && a.target==="done"));
+});
+
+test("missing old branch after concurrent auto-deletion is contained and nonfatal", async () => {
+  const routes=world();delete routes["GET /repos/o/r/git/ref/heads/done"];
+  const {client,writes}=fake(routes);
+  const result=await reconcileRepo(client,repo,{apply:true,now:NOW});
+  assert.ok(!writes.some(w=>w.method==="DELETE"));
+  assert.ok(result.debts.some(d=>d.id.includes("changed-during-reconciliation")));
 });
 
 test("max-merges caps merges per run", async () => {
   const { client, writes } = fake(world());
   await reconcileRepo(client, repo, { apply: true, maxMerges: 0, now: NOW });
   assert.ok(!writes.some((w) => w.method === "PUT"));
+});
+
+test("off-origin pagination refuses rather than leaking the GitHub credential",async()=>{
+ const calls=[];
+ const fetchImpl=async(url,init)=>{
+   calls.push({url,auth:init.headers.authorization});
+   return {ok:true,status:200,headers:new Headers({
+     link:'<https://attacker.invalid/steal>; rel="next"'
+   }),text:async()=>JSON.stringify([{name:"safe"}])};
+ };
+ const client=createClient({token:"secret",fetchImpl});
+ let blocked=false;
+ try{await client.paginate("/repos/o/r/branches")}catch(e){
+   blocked=/outside authorized API origin/.test(e.message);
+ }
+ assert.equal(blocked,true);
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].url,"https://api.github.com/repos/o/r/branches?per_page=100");
 });
 
 test("createClient follows Link rel=next and sends the token", async () => {
