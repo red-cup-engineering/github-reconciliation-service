@@ -21,7 +21,7 @@ export async function listRepos(client, orgs) {
  * item becomes a debt record. Nothing is archived and no repository is deleted.
  */
 export async function reconcileRepo(client, repo, options = {}) {
-  const { apply = false, closeIssues = false, mergeMethod = "squash", maxMerges = 25, minAgeDays = 2, now = new Date().toISOString() } = options;
+  const { apply = false, mergeGreenPulls = false, closeIssues = false, mergeMethod = "squash", maxMerges = 25, minAgeDays = 2, now = new Date().toISOString() } = options;
   const actions = [];
   const debts = [];
   const note = (kind, target, extra = {}) => actions.push({ kind, repo, target, applied: false, ...extra });
@@ -51,7 +51,9 @@ export async function reconcileRepo(client, repo, options = {}) {
     if (cls === "green-and-mergeable" && merges < maxMerges) {
       merges += 1;
       const action = { kind: "merge-pull-request", repo, target: pull.number, class: cls, applied: false, title: pull.title };
-      if (apply) {
+      if (apply && mergeGreenPulls) {
+        // Green test results alone cannot grant merge authority: the operator
+        // must explicitly enable qualified PR merges separately from pruning.
         await client.request("PUT", `/repos/${repo}/pulls/${pull.number}/merge`, { merge_method: mergeMethod, sha: pull.head.sha });
         action.applied = true;
         mergedPulls.push({ ...pull, merged_at: now });
@@ -70,12 +72,28 @@ export async function reconcileRepo(client, repo, options = {}) {
     if (DELETABLE_BRANCH_CLASSES.has(cls)) {
       const action = { kind: "delete-branch", repo, target: branch.name, class: cls, applied: false };
       if (apply) {
-        const head = await client.request("GET", `/repos/${repo}/git/ref/heads/${path(branch.name)}`);
-        const latest = await client.request("GET", `/repos/${repo}/compare/${path(defaultBranch)}...${path(branch.name)}`);
-        if (head.object?.sha !== branch.commit.sha || latest.ahead_by !== 0) {
-          debts.push(debtRecord({ repo, kind: "branch", id: branch.name,
-            cls: "changed-during-reconciliation", now,
-            evidence: "Head or containment changed before deletion. Ref left intact." }));
+        let head, branchNow, latest, openNow;
+        try {
+          [head, branchNow, latest, openNow] = await Promise.all([
+            client.request("GET", `/repos/${repo}/git/ref/heads/${path(branch.name)}`),
+            client.request("GET", `/repos/${repo}/branches/${path(branch.name)}`),
+            client.request("GET", `/repos/${repo}/compare/${path(defaultBranch)}...${path(branch.name)}`),
+            client.paginate(`/repos/${repo}/pulls?state=open&head=${encodeURIComponent(repo.split("/")[0] + ":" + branch.name)}`),
+          ]);
+        } catch (error) {
+          debts.push(debtRecord({ repo, kind:"branch", id:branch.name,
+            cls:"changed-during-reconciliation", now,
+            evidence:"Pre-delete verification unavailable; ref left intact: "+error.message }));
+          actions.push(action);
+          continue;
+        }
+        if (head.object?.sha !== branch.commit.sha ||
+            branchNow.commit?.sha !== branch.commit.sha ||
+            branchNow.protected !== false || latest.ahead_by !== 0 ||
+            !Array.isArray(openNow) || openNow.length !== 0) {
+          debts.push(debtRecord({ repo, kind:"branch", id:branch.name,
+            cls:"changed-during-reconciliation", now,
+            evidence:"Head, protection, open PRs, or containment changed; ref left intact." }));
         } else {
           await client.request("DELETE", `/repos/${repo}/git/refs/heads/${path(branch.name)}`);
           action.applied = true;
