@@ -4,7 +4,15 @@
  */
 export function createClient({ token, fetchImpl = globalThis.fetch, base = "https://api.github.com" }) {
   async function raw(method, path, body) {
-    const response = await fetchImpl(path.startsWith("http") ? path : base + path, {
+    // Link headers are untrusted data: even in an authenticated pagination
+    // response they cannot authorize forwarding this credential to another
+    // host, subdomain, HTTP downgrade, or URL userinfo.
+    const origin=new URL(base);
+    const url=new URL(path,origin);
+    if(url.protocol!=="https:" || url.origin!==origin.origin ||
+       url.username || url.password)
+      throw new TypeError("GitHub pagination target is outside authorized API origin");
+    const response = await fetchImpl(url.href, {
       method,
       headers: {
         accept: "application/vnd.github+json",
