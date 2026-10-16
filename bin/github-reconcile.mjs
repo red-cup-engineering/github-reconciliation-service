@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * github-reconcile [--org NAME]... [--repo OWNER/NAME]... [--apply] [--register DIR]
- *                  [--merge-method squash|merge|rebase] [--max-merges N] [--min-age-days N]
+ *                  [--merge-green-pulls] [--merge-method squash|merge|rebase]
+ *                  [--close-issues] [--max-merges N] [--min-age-days N]
  *
  * Reads the token from $GITHUB_TOKEN, or from the systemd credential `github-token`
  * ($CREDENTIALS_DIRECTORY). Without --apply it only reports what it would do.
@@ -12,14 +13,33 @@ import { createClient } from "../src/github-client.mjs";
 import { listRepos, reconcileRepo, summarize } from "../src/reconcile.mjs";
 
 const argv = process.argv.slice(2);
-const values = (flag) => argv.flatMap((arg, i) => (arg === flag ? [argv[i + 1]] : []));
+const values = (flag) => argv.flatMap((arg,i) => {
+  if(arg !== flag)return [];
+  const value=argv[i+1];
+  if(typeof value!=="string" || value.startsWith("--"))
+    throw new TypeError("missing value for "+flag);
+  return [value];
+});
 const one = (flag, fallback) => values(flag)[0] ?? fallback;
 const token = process.env.GITHUB_TOKEN ?? (process.env.CREDENTIALS_DIRECTORY ? readFileSync(join(process.env.CREDENTIALS_DIRECTORY, "github-token"), "utf8").trim() : undefined);
 if (!token) { console.error("no token: set GITHUB_TOKEN or provide the github-token credential"); process.exit(2); }
 
 const client = createClient({ token });
-const repos = [...values("--repo"), ...(await listRepos(client, values("--org")))];
-const options = { apply: argv.includes("--apply"), closeIssues: argv.includes("--close-issues"), mergeMethod: one("--merge-method", "squash"), maxMerges: Number(one("--max-merges", 25)), minAgeDays: Number(one("--min-age-days", 2)) };
+const repos = [...new Set([...values("--repo"), ...(await listRepos(client,values("--org")))])];
+if(repos.length===0 || repos.some(name=> !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/iu.test(name)))
+  throw new TypeError("provide at least one valid --repo OWNER/NAME or --org NAME");
+const safeInt = (text,flag) => {
+  const n=Number(text);
+  if(!Number.isSafeInteger(n)||n<0)throw new TypeError(flag+" must be a nonnegative integer");
+  return n;
+};
+const options = { apply:argv.includes("--apply"), mergeGreenPulls:argv.includes("--merge-green-pulls"),
+  closeIssues:argv.includes("--close-issues"),
+  mergeMethod:one("--merge-method","squash"),
+  maxMerges:safeInt(one("--max-merges",25),"--max-merges"),
+  minAgeDays:safeInt(one("--min-age-days",2),"--min-age-days") };
+if(!["merge","squash","rebase"].includes(options.mergeMethod))
+  throw new TypeError("--merge-method must be merge, squash or rebase");
 const results = [];
 for (const repo of repos) {
   try { results.push(await reconcileRepo(client, repo, options)); }
