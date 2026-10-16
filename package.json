@@ -1,0 +1,15 @@
+{
+  "name": "@red-cup-engineering/github-reconciliation-service",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Without a model in the loop: lists open pull requests, branches and issues through the GitHub REST API, classifies each by mechanical tests, applies the safe action for its class and writes every other one as a system-debt record.",
+  "bin": { "github-reconcile": "./bin/github-reconcile.mjs" },
+  "exports": {
+    ".": "./src/reconcile.mjs",
+    "./classify": "./src/classify.mjs",
+    "./client": "./src/github-client.mjs"
+  },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "engines": { "node": ">=22" },
+  "license": "UNLICENSED"
+}
