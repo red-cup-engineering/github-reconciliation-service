@@ -4,14 +4,16 @@ Settles the open pull requests, branches and issues of the 561 Group organizatio
 
 ```
 github-reconcile --org red-cup-engineering --org 561-group [--repo OWNER/NAME] [--apply]
-                 [--merge-green-pulls] [--close-issues] [--register DIR]
+                 [--merge-green-pulls] [--receive-equivalent] [--max-equivalents 8]
+                 [--close-issues] [--register DIR]
                  [--merge-method squash] [--max-merges 25] [--min-age-days 2]
 ```
 
-Without `--apply` it reads and reports. With `--apply` it **only prunes
-proven contained, unprotected branches**; qualified PR merges additionally
-require `--merge-green-pulls`, and closing issues separately requires
-`--close-issues`. This prevents merely asking to clean obsolete refs from
+Without `--apply` it reads and reports. With `--apply` it prunes
+**proven contained, unprotected branches**; qualified ordinary PR merges
+additionally require `--merge-green-pulls`, and closing issues separately
+requires `--close-issues`. Historical commits with *identical current content*
+can be received and retired only with `--receive-equivalent`. This prevents merely asking to clean obsolete refs from
 silently merging a proposal or changing an issue. Supply at least one
 `--repo` or `--org`; invalid or empty scopes are refused. Duplicate targets
 are deduplicated, and malformed limits refuse before mutation.
@@ -27,7 +29,8 @@ on a partial set.
 | Item | Test | Action |
 | --- | --- | --- |
 | Branch | `compare` shows `ahead_by` 0; immediately before deletion, the original SHA, branch protection, fresh ahead count and newly opened PRs are independently rechecked | Delete the branch only if all checks pass. A squash-merged PR head is not sufficient evidence. |
-| Branch | has commits the default branch lacks, last commit older than `--min-age-days` | Debt record `unique-commits`. |
+| Branch | has unique commits but every changed, bounded file/Gitlink blob matches the current default branch | With explicit `--receive-equivalent`, merge the history using a real PR then recheck/retire the source branch; otherwise report candidate. Refuse truncated diffs, deletions, renames, unreadable or unequal blobs. |
+| Branch | has genuinely new or unverifiable commits, last commit older than `--min-age-days` | Debt record `unique-commits`. |
 | Branch | default, protected, or has an open pull request | Nothing. |
 | Pull request | `mergeable` true, `mergeable_state` clean, at least one check and all passing, not a draft, against the default branch | Merge only with `--apply --merge-green-pulls` (at most `--max-merges` per run); otherwise report candidate. |
 | Pull request | conflicting, checks failing, no checks, not clean, or every file it changes was changed on the default branch after its base commit | Debt record with that class. |
@@ -42,7 +45,11 @@ The **declarative** `.github/workflows/github-reconcile-contained-branches.yml`
 in the Engineering parent consumes this single Engineering-owned implementation.
 On source-owner changes, merged PRs and explicitly requested manual dispatch,
 it first runs the original Node tests, then invokes only its own repository
-with `--apply --max-merges 0`. GitHub's short-lived workflow token has
+with `--apply --max-merges 0 --receive-equivalent --max-equivalents 3`.
+This will not merge arbitrary green PRs or close issues: it may receive at
+most three already-matching branch histories per invocation, creating real
+merge commits and closing failed attempts immediately, then verifying source
+branch deletion. GitHub's short-lived workflow token has
 `contents:write` only for that repository; it never sends credentials to
 another host or receives authority over Science/Data/Operations repositories.
 No GitHub Actions cron or ChatGPT Scheduled Task was created. A workflow
