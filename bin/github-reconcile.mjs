@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * github-reconcile [--org NAME]... [--repo OWNER/NAME]... [--apply] [--register DIR]
- *                  [--merge-green-pulls] [--merge-method squash|merge|rebase]
- *                  [--close-issues] [--max-merges N] [--min-age-days N]
+ *                  [--merge-green-pulls] [--receive-equivalent] [--max-equivalents N]
+ *                  [--merge-method squash|merge|rebase] [--close-issues]
+ *                  [--max-merges N] [--min-age-days N]
  *
  * Reads the token from $GITHUB_TOKEN, or from the systemd credential `github-token`
  * ($CREDENTIALS_DIRECTORY). Without --apply it only reports what it would do.
@@ -34,6 +35,8 @@ const safeInt = (text,flag) => {
   return n;
 };
 const options = { apply:argv.includes("--apply"), mergeGreenPulls:argv.includes("--merge-green-pulls"),
+  receiveEquivalent:argv.includes("--receive-equivalent"),
+  maxEquivalentMerges:safeInt(one("--max-equivalents",8),"--max-equivalents"),
   closeIssues:argv.includes("--close-issues"),
   mergeMethod:one("--merge-method","squash"),
   maxMerges:safeInt(one("--max-merges",25),"--max-merges"),
