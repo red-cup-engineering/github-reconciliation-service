@@ -129,7 +129,7 @@ test("apply merges the green pull request, deletes contained branches, closes th
   assert.ok(sent.includes("PATCH /repos/o/r/issues/40"));
   assert.ok(!sent.some((s) => s.includes("issues/41") || s.includes("issues/42") || s.includes("issues/43")));
   assert.deepEqual(result.debts.map((d) => d.id).sort(), ["github-o-r-branch-work-unique-commits", "github-o-r-pull-request-6-conflicting"]);
-  assert.deepEqual(summarize([result]), { repos: 1, branchesDeleted: 1, branchesDeletable: 1, pullRequestsMerged: 1, pullRequestsMergeable: 1, issuesClosed: 1, issuesClosable: 1, debtRecords: 2 });
+  assert.deepEqual(summarize([result]), { repos: 1, branchesDeleted: 1, equivalentHistoryReceived:0, equivalentHistoryRetired:0, equivalentCandidates:0, branchesDeletable: 1, pullRequestsMerged: 1, pullRequestsMergeable: 1, issuesClosed: 1, issuesClosable: 1, debtRecords: 2 });
 });
 
 test("issue closure is opt-in and unique squashed history is preserved", async () => {
@@ -177,6 +177,26 @@ test("missing old branch after concurrent auto-deletion is contained and nonfata
   const result=await reconcileRepo(client,repo,{apply:true,now:NOW});
   assert.ok(!writes.some(w=>w.method==="DELETE"));
   assert.ok(result.debts.some(d=>d.id.includes("changed-during-reconciliation")));
+});
+
+test("equivalent-history dry-run produces a checked candidate, not a deletion",async()=>{
+ const routes=world();
+ routes["GET /repos/o/r/contents/src/a.mjs?ref=main"]={sha:"sha1",type:"file"};
+ routes["GET /repos/o/r/contents/src/a.mjs?ref=squashed"]={sha:"sha1",type:"file"};
+ routes["GET /repos/o/r/compare/main...squashed"]={
+   ahead_by:2,files:[{filename:"src/a.mjs",status:"modified"}],
+ };
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{
+   receiveEquivalent:true,apply:false,now:NOW,maxEquivalentMerges:1,
+ });
+ const received=result.actions.filter(a=>a.kind==="receive-equivalent-branch");
+ assert.equal(received.length,1);
+ assert.equal(received[0].target,"squashed");
+ assert.equal(received[0].verifiedFiles,1);
+ assert.equal(received[0].applied,false);
+ assert.deepEqual(writes,[]);
+ assert.equal(summarize([result]).equivalentCandidates,1);
 });
 
 test("max-merges caps merges per run", async () => {
