@@ -1,5 +1,6 @@
 import { branchClass, checksState, DELETABLE_BRANCH_CLASSES, issueClosers, pullClass } from "./classify.mjs";
 import { debtRecord } from "./debt-record.mjs";
+import { receiveEquivalentBranch } from "./receive-equivalent.mjs";
 
 const path = (value) => value.split("/").map(encodeURIComponent).join("/");
 const DAY = 86_400_000;
@@ -21,7 +22,7 @@ export async function listRepos(client, orgs) {
  * item becomes a debt record. Nothing is archived and no repository is deleted.
  */
 export async function reconcileRepo(client, repo, options = {}) {
-  const { apply = false, mergeGreenPulls = false, closeIssues = false, mergeMethod = "squash", maxMerges = 25, minAgeDays = 2, now = new Date().toISOString() } = options;
+  const { apply = false, mergeGreenPulls = false, receiveEquivalent = false, maxEquivalentMerges = 8, closeIssues = false, mergeMethod = "squash", maxMerges = 25, minAgeDays = 2, now = new Date().toISOString() } = options;
   const actions = [];
   const debts = [];
   const note = (kind, target, extra = {}) => actions.push({ kind, repo, target, applied: false, ...extra });
@@ -65,6 +66,8 @@ export async function reconcileRepo(client, repo, options = {}) {
   }
 
   const openPullHeads = new Set(openPulls.map((pull) => pull.head.ref));
+  const originalDefaultHead=branches.find(branch=>branch.name===defaultBranch)?.commit?.sha;
+  let equivalentReceipts=0;
   for (const branch of branches) {
     if (branch.name === defaultBranch) continue;
     const compare = await client.request("GET", `/repos/${repo}/compare/${path(defaultBranch)}...${path(branch.name)}`).catch(() => null);
@@ -101,6 +104,35 @@ export async function reconcileRepo(client, repo, options = {}) {
       }
       actions.push(action);
     } else if (cls === "unique-commits") {
+      // Distinct commits are NEVER deleted outright. With an explicit
+      // receiving mode, prove that every changed file/Gitlink already exists
+      // on main, then receive the historical commits through a real Git merge
+      // and retire the source branch. This is not semantic equivalence of
+      // claims or permission to merge arbitrary unqualified PRs.
+      if (receiveEquivalent && !branch.protected && originalDefaultHead &&
+          Number.isSafeInteger(maxEquivalentMerges) &&
+          equivalentReceipts < maxEquivalentMerges) {
+        const receipt=await receiveEquivalentBranch(client,{
+          repo,base:defaultBranch,branch:branch.name,headSha:branch.commit.sha,
+          baseSha:originalDefaultHead,compare,apply,
+        });
+        if (receipt.fileCount>0) {
+          equivalentReceipts++;
+          actions.push({
+            kind:"receive-equivalent-branch",repo,target:branch.name,
+            class:"content-equivalent",applied:receipt.received,
+            deleted:receipt.deleted,prNumber:receipt.prNumber??null,
+            verifiedFiles:receipt.fileCount,reason:receipt.reason,
+          });
+          if (apply && (!receipt.received || !receipt.deleted))
+            debts.push(debtRecord({repo,kind:"branch",id:branch.name,
+              cls:"equivalent-receiving-blocked",now,
+              evidence:"Equivalent history was not fully received and retired: "+
+                receipt.reason+(receipt.detail?" "+receipt.detail:"")+
+                (receipt.closeProblem?"; PR close failed: "+receipt.closeProblem:"")}));
+          continue;
+        }
+      }
       const head = await client.request("GET", `/repos/${repo}/commits/${branch.commit.sha}`).catch(() => null);
       const date = head?.commit?.committer?.date;
       if (date && old(date)) debts.push(debtRecord({ repo, kind: "branch", id: branch.name, cls, evidence: `${compare?.ahead_by ?? "?"} commits not in ${defaultBranch}; last commit ${date}.`, now }));
@@ -128,7 +160,11 @@ export function summarize(results) {
   const count = (kind) => results.flatMap((result) => result.actions).filter((action) => action.kind === kind);
   return {
     repos: results.length,
-    branchesDeleted: count("delete-branch").filter((action) => action.applied).length,
+    branchesDeleted: count("delete-branch").filter((action) => action.applied).length+
+      count("receive-equivalent-branch").filter((action)=>action.deleted).length,
+    equivalentHistoryReceived:count("receive-equivalent-branch").filter((action)=>action.applied).length,
+    equivalentHistoryRetired:count("receive-equivalent-branch").filter((action)=>action.deleted).length,
+    equivalentCandidates:count("receive-equivalent-branch").length,
     branchesDeletable: count("delete-branch").length,
     pullRequestsMerged: count("merge-pull-request").filter((action) => action.applied).length,
     pullRequestsMergeable: count("merge-pull-request").length,
