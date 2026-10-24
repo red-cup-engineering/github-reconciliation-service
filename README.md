@@ -34,6 +34,13 @@ source and original Work questions. An unavailable comparison is classified
 Git SHA-1 and SHA-256 merge-base object IDs are both preserved when observed.
 No one of these facts authorizes branch deletion or PR merging.
 
+The `branchSourceCandidateCount` is a separately named numeric census and
+`branchSourceCandidates` is the collection of typed branch observations.
+Previously the numeric `summarize().branchSourceCandidates` shared the array
+name, so the CLI's array silently overwrote the count. The original consumer
+can now prove source count parity without guessing whether a key is numeric or
+an array. No Work acceptance or deletion follows from either field.
+
 The `branchSourceCandidates` in this output carry original GitHub repository
 ID, standard fully-qualified `refs/heads/...` name, branch and default
 commit identity, `aheadCommitCount`, `behindCommitCount`, actual

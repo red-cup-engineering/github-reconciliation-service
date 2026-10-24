@@ -294,7 +294,7 @@ export function summarize(results) {
     branchesDeleted:0, equivalentHistoryReceived:0,equivalentHistoryRetired:0,
     equivalentCandidates:count("assess-equivalent-branch-source").length,
     branchesDeletable:0,
-    branchSourceCandidates:results.reduce((n,r)=>n+(r.sourceCandidates?.length??0),0),
+    branchSourceCandidateCount:results.reduce((n,r)=>n+(r.sourceCandidates?.length??0),0),
     originalPullsObserved:results.reduce((n,r)=>n+(r.pullSourceCandidates?.length??0),0),
     pullRequestsMerged:0,pullRequestsMergeable:count("receive-pull-source").length,
     issuesClosed:0,issuesClosable:0,
