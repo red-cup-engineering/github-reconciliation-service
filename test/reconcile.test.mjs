@@ -132,7 +132,10 @@ const world = () => ({
   "GET /repos/o/r/compare/main...pr-green": { ahead_by: 1 },
   "GET /repos/o/r/commits/w": { commit: { committer: { date: OLD } } },
   "LIST /repos/o/r/issues?state=open": [
-    { number: 40 }, { number: 41 }, { number: 42 }, { number: 43, pull_request: {} },
+    { id: 140, number: 40, state:"open", updated_at:OLD },
+    { id: 141, number: 41, state:"open", updated_at:OLD },
+    { id: 142, number: 42, state:"open", updated_at:OLD },
+    { id: 143, number: 43, pull_request: {}, state:"open", updated_at:OLD },
   ],
 });
 
@@ -415,4 +418,42 @@ test("source reader has no hidden GitHub merge, issue-close or ref-delete calls"
  assert.doesNotMatch(source,/client\.request\("(?:POST|PUT|PATCH|DELETE)"/u);
  assert.equal(DELETABLE_BRANCH_CLASSES.size,0);
  assert.equal(SOURCE_CONTAINMENT_CLASSES.has("contained-in-default"),true);
+});
+
+
+test("all open original issue sources reach the same typed result without a closing keyword",async()=>{
+ const routes=world();
+ routes["LIST /repos/o/r/pulls?state=closed&sort=updated&direction=desc"]=[];
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ assert.deepEqual(writes,[]);
+ assert.equal(result.originalIssueSources.length,3);
+ assert.equal(summarize([result]).originalIssuesObserved,3);
+ assert.ok(result.originalIssueSources.every(row=>row.recordKind==="github.issue-source-observation/v1"
+   &&row.repositoryId===12345&&row.issueState==="open"
+   &&row.closingKeywordMergedPullRequestUrl===null
+   &&row.originalWorkReceiving==="not-observed"
+   &&row.automaticIssueClosureAllowed===false));
+ assert.equal(result.originalIssueSources[0].issueId,140);
+ assert.equal(result.originalIssueSources[0].issueNumber,40);
+ assert.equal(result.originalIssueSources[0].issueUpdatedAt,OLD);
+ assert.equal(result.actions.some(row=>row.kind==="receive-issue-outcome"),false);
+});
+
+test("duplicate or unversioned original issue source must refuse, never invent an empty inventory",async()=>{
+ for(const issues of [
+   [{id:20,number:1,state:"open",updated_at:OLD},
+    {id:20,number:2,state:"open",updated_at:OLD}],
+   [{id:20,number:1,state:"open",updated_at:OLD},
+    {id:21,number:1,state:"open",updated_at:OLD}],
+   [{number:1,state:"open",updated_at:OLD}],
+   [{id:20,number:1,state:"open"}],
+   [{id:20,number:1,state:"closed",updated_at:OLD}]
+ ]){
+   const routes=world();routes["LIST /repos/o/r/issues?state=open"]=issues;
+   const {client,writes}=fake(routes);
+   await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
+     /issue identity, revision or source coverage is incomplete/u);
+   assert.deepEqual(writes,[]);
+ }
 });

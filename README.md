@@ -148,3 +148,16 @@ claim. GitHub Engineering's original revision-leased operations remain the
 only admissible actuator once original Work and independent receiving qualify
 the concrete effect. `test/reconcile.test.mjs` enforces this source boundary
 in addition to the existing no-effect provider fixtures.
+
+### Original issues are observed without closing-keyword selection
+
+The same authenticated, bounded GitHub REST source reader now pages current
+open issues even when no merged PR says `Fixes #...`. Each resulting
+`github.issue-source-observation/v1` retains the provider's stable numeric
+repository/issue IDs, issue number, original `updated_at` source revision,
+actual open state, and *optional* exact merged-PR keyword relation. The
+existing CLI report's `originalIssueSources` is its ordinary JSON consumer;
+no separate JSON or issue register is written. Duplicate/missing identity,
+unversioned or contradictory provider state refuse rather than describing
+an empty source population. No keyword is independent beneficiary receipt,
+and `automaticIssueClosureAllowed` is always false.

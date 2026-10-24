@@ -21,6 +21,7 @@ globalThis.fetch = async (url, init) => {
     "/repos/o/r": { id: 12345, default_branch: "main" },
     "/repos/o/r/branches": [{name:"main",protected:false,commit:{sha:"a".repeat(40)}}],
     "/repos/o/r/pulls": [],
+    "/repos/o/r/issues": [],
     "/repos/o/r/git/matching-refs/tags/archive/": []
   };
   const allowed = init.method === "GET" && Object.hasOwn(routes, path);
@@ -46,6 +47,8 @@ globalThis.fetch = async (url, init) => {
     assert.deepEqual(success.errors, []);
     assert.equal(success.archiveRefCoverage,"complete-for-observed-repositories");
     assert.deepEqual(success.archiveRefSources,[]);
+    assert.deepEqual(success.originalIssueSources,[]);
+    assert.equal(success.originalIssuesObserved,0);
     assert.equal(success.archiveTagSourcesObserved,0);
 
     const mixed = invoke("o/r", "x/y");

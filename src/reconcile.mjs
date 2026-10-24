@@ -32,6 +32,7 @@ export async function reconcileRepo(client, repo, options = {}) {
   const actions = [];
   const debts = [];
   const sourceCandidates = [];
+  const originalIssueSources = [];
   const note = (kind, target, extra = {}) => actions.push({ kind, repo, target, applied: false, ...extra });
   const old = (iso) => Date.parse(now) - Date.parse(iso) >= minAgeDays * DAY;
 
@@ -39,12 +40,43 @@ export async function reconcileRepo(client, repo, options = {}) {
   const defaultBranch = info.default_branch;
   if (!Number.isSafeInteger(info.id) || info.id <= 0 || !defaultBranch)
     throw new TypeError("source owner repository ID and default branch not observed");
-  const [branches, openPulls, closedPulls] = await Promise.all([
+  const [branches, openPulls, closedPulls, openIssues] = await Promise.all([
     client.paginate(`/repos/${repo}/branches`),
     client.paginate(`/repos/${repo}/pulls?state=open`),
     client.paginate(`/repos/${repo}/pulls?state=closed&sort=updated&direction=desc`, { maxPages: 3 }),
+    client.paginate(`/repos/${repo}/issues?state=open`),
   ]);
   const mergedPulls = closedPulls.filter((pull) => pull.merged_at);
+  // An issue is a first-class original Work/source candidate even when no
+  // merged PR uses a closing keyword. This is one already-observed GitHub
+  // source list, not a new issue queue or fabricated outcome.
+  const closers = issueClosers(mergedPulls, repo);
+  const seenIssueIds = new Set(), seenIssueNumbers = new Set();
+  for (const issue of openIssues) {
+    if (issue.pull_request) continue;
+    if (!Number.isSafeInteger(issue.id) || issue.id < 1 ||
+        !Number.isSafeInteger(issue.number) || issue.number < 1 ||
+        seenIssueIds.has(issue.id) || seenIssueNumbers.has(issue.number) ||
+        issue.state !== "open" || typeof issue.updated_at !== "string" ||
+        !Number.isFinite(Date.parse(issue.updated_at)))
+      throw new TypeError("Original GitHub issue identity, revision or source coverage is incomplete");
+    seenIssueIds.add(issue.id);seenIssueNumbers.add(issue.number);
+    const closer = closers.get(issue.number) ?? null;
+    originalIssueSources.push(Object.freeze({
+      recordKind: "github.issue-source-observation/v1",
+      repositoryId: info.id, repositoryFullName: repo,
+      issueId: issue.id, issueNumber: issue.number,
+      issueUpdatedAt: issue.updated_at, issueState: "open",
+      closingKeywordMergedPullRequestUrl: closer?.html_url ?? null,
+      sourceCoverage: "paged-current-open-github-issues",
+      originalWorkReceiving: "not-observed",
+      ordinaryConsumerReceiving: "not-observed",
+      automaticIssueClosureAllowed: false,
+      firstReceivingAction: closer
+        ? "reconcile-merged-source-with-original-issue-need-and-beneficiary"
+        : "read-original-issue-requirement-and-ordinary-consumer",
+    }));
+  }
 
   // Qualify current pull source; no merge can occur in a source observation.
   let qualifiedPullSources = 0;
@@ -187,9 +219,8 @@ export async function reconcileRepo(client, repo, options = {}) {
     }
   }
 
-  const closers = issueClosers(mergedPulls, repo);
   if (closers.size) {
-    for (const issue of await client.paginate(`/repos/${repo}/issues?state=open`)) {
+    for (const issue of openIssues) {
       const pull = closers.get(issue.number);
       if (!pull || issue.pull_request) continue;
       const action = { kind: "receive-issue-outcome", repo, target: issue.number,
@@ -203,6 +234,7 @@ export async function reconcileRepo(client, repo, options = {}) {
   }
   return { repo, actions, debts, sourceObservations,
     sourceCandidates:Object.freeze(sourceCandidates),
+    originalIssueSources:Object.freeze(originalIssueSources),
     originalWorkReceiving:"not-observed",effectAuthority:"none; native Work receiving required" };
 }
 
@@ -217,6 +249,8 @@ export function summarize(results) {
     pullRequestsMerged:0,pullRequestsMergeable:count("receive-pull-source").length,
     issuesClosed:0,issuesClosable:0,
     issueOutcomeCandidates:count("receive-issue-outcome").length,
+    originalIssuesObserved:results.reduce((count,result)=>
+      count+(result.originalIssueSources?.length??0),0),
     archiveTagSourcesObserved: results.reduce((total,result)=>total+(result.sourceObservations?.length ?? 0),0),
     archiveTagSourcesAwaitingReceiving: results.reduce((total,result)=>total+(result.sourceObservations?.filter(x=>x.independentReceivingRequired).length ?? 0),0),
     branchesHeldByArchiveSource:results.reduce((n,r)=>n+(r.sourceCandidates?.filter(
