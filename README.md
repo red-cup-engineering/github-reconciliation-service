@@ -15,11 +15,11 @@ revision-leased GitHub merge/issue/ref-retirement actuator.
 ```sh
 github-reconcile --org red-cup-engineering --org 561-group [--repo OWNER/NAME]
                  [--receive-equivalent] [--max-equivalents 8]
-                 [--min-age-days 2]
 ```
 
-The historical `--apply` and `--register` write-only-debt-file modes are
-**refused before credential acquisition**. A GitHub token and the technical
+The historical `--apply`, `--register`, `--min-age-days`, PR-merge/issue-close
+and `--max-merges` switches are **refused before credential acquisition**.
+They were orphaned debt output and effect selectors, not qualified Work. A GitHub token and the technical
 fact that a branch is contained in another are not permission to delete that
 branch; matching blobs do not receive the original requirements or consumers.
 The one original machine-readable CLI result remains the output carrier, and
@@ -168,7 +168,8 @@ count). That includes draft, conflict, nondefault-target, pending,
 skipped/inconclusive, unavailable-CI and qualified-green proposals.
 `pullRequestsMergeable` continues to count only its historical green
 technical subset and never represents the original Work inventory.
-A historical `--max-merges 0` limit does not censor source observations.
+A historical merge quota does not censor these source observations; the
+old quota flag is rejected rather than quietly ignored.
 
 The fields distinguish `pullRequestId` (GitHub numeric identity),
 `pullRequestNumber` (repository-scoped issue/PR number),
@@ -183,23 +184,35 @@ merge, review, closure, deletion, original Work acceptance or beneficiary
 receiving. GitHub pull source evidence remains a projection of the
 original Work, not a new backlog or JSON file.
 
-The previous `system-debt` objects in `src/debt-record.mjs` were
-historically counted but **not delivered** through CLI stdout; their
-`id`, `after`, `breaks-requirements` and free-text `repair` were not
-a typed Work decision. The first actually selected downstream consumer
-must read the source arrays, not infer an actionable debt register from
-the legacy count. Retire the compatibility aggregate only after that
-consumer is qualified; this change does not create another JSON store.
+### One original typed source contract, not orphan debt JSON
 
-**Issue processing:** with the already separate explicit `--close-issues`
-grant, the original GitHub API must now independently read back the actual
-closed issue `number`, `state`, and `state_reason` after a closure attempt
-before it counts `issuesClosed`. An unavailable/contradictory readback is
-a retained existing debt candidate, not an automatic blind retry or complete
-Semioverse Work. The ordinary original optional `--register DIR` still
-writes historical debt-register files and does **not** demonstrate an
-installed independent reader; the new tag source is intentionally consumed
-via original runtime JSON output instead of adding more orphan JSON.
+The old `src/debt-record.mjs` produced `system-debt` objects with an
+opaque slug `id`, empty `breaks-requirements`/`after`, free-text `repair`,
+and a guessed owning section. Neither the CLI nor the actual Computer
+Engineering Actions reader consumed those objects: only a count survived.
+**That unused maker, accumulator, age heuristic and `debtRecords` count
+have been removed.** No historical Git objects or actual Work were erased.
+The competent original source now yields GitHub's actual repository, PR,
+branch, tag and issue identities with `recordKind` and explicit receiving
+status; there is no second ticket/JSON registry.
+
+`src/source-report.mjs#admitGitHubReconciliationSource` is the common
+upstream admission boundary for the transient
+`github.reconciliation-source-report/v1` record. The existing CLI now
+**invokes that source contract on every successfully observed repository**
+before publishing JSON. The already selected Computer Engineering Actions
+reader imports the exact same source-owning validator, instead of copying
+the schema/relations, and handles only the presentation and safe links.
+The validator requires the one-repo source-cut and archive coverage, full
+branch/PR/tag/issue collections with GitHub IDs/refs/OIDs, cross-record
+relational consistency, census parity and no effect or Work acceptance
+claims. These standard Git/GitHub identifiers are **source coordinates**,
+not a new authority to integrate or retire a ref.
+
+**Issues:** each open original issue is independently source-observed,
+regardless of merged-PR closing keywords, and never automatically closed.
+Closure and revision-bound effect readback belong to the original GitHub
+Engineering/Coesite receiving chain, not this observer.
 
 ## Source-to-receiving classes, not automatically executable actions
 
@@ -225,13 +238,16 @@ frontiers, not debt discharged.
 ### Original real consumers, including the former unsafe parent workflow
 
 Computer Engineering's source-selected Gitlinks route through Systems and
-Code Development to this GitHub Reconciliation service. The parent workflow
-previously used `--apply` and a write-capable GitHub token on source
-containment alone. [Computer Engineering draft PR #518](https://github.com/red-cup-engineering/computer-engineering-services-section/pull/518)
-removes `--apply`, restricts that particular caller to read-only GitHub
-permissions, and stops generating temporary orphan debt JSON. Its private
-source review/merge and installed workflow selection remain **unverified**,
-not an already-repaired production deployment.
+Code Development to this source owner. Its original typed reader
+[PR #519](https://github.com/red-cup-engineering/computer-engineering-services-section/pull/519)
+has merged and reads the existing CLI JSON instead of a write-only debt
+folder. The continuing
+[PR #521](https://github.com/red-cup-engineering/computer-engineering-services-section/pull/521)
+handles exact branch↔PR source identities and complete source cuts but is
+still a draft. The source change here additionally centralizes type
+admission at the maker. Private hosted Node tests, immutable package
+selection, installed machine use and independent receiving remain
+separate, **unobserved** boundaries.
 
 The original optional systemd service now retains one source-only output
 stream in the system journal, uses read-only filesystem policy and does not
