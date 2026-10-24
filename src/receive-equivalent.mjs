@@ -19,6 +19,13 @@ const failure=(reason,extra={})=>Object.freeze({
 export async function receiveEquivalentBranch(client,{
   repo,base,branch,baseSha,headSha,compare,apply=false,
 }){
+  // Public source-byte equivalence is neither Work receiving nor permission
+  // to create a PR, merge code or delete a branch. The native GitHub owner
+  // retains these effects after independent source/consumer receiving.
+  if(apply) return failure("original-native-work-and-consumer-receiving-required",{
+    sourceHead:headSha??null,baseHead:baseSha??null,fileCount:0,
+    sourceAuthority:"none; original revision-bound GitHub receiver required"
+  });
   const proof=await branchContentEquivalence(client,repo,base,branch,compare);
   if(!proof.equivalent)return failure(proof.reason,{fileCount:0});
   const candidate={

@@ -14,6 +14,8 @@ import { createClient } from "../src/github-client.mjs";
 import { listRepos, reconcileRepo, summarize } from "../src/reconcile.mjs";
 
 const argv = process.argv.slice(2);
+if(argv.includes("--apply"))
+  throw new TypeError("--apply refused: GitHub source observation alone cannot merge a PR, close Work or retire Git refs; use the original native receiving operations");
 const values = (flag) => argv.flatMap((arg,i) => {
   if(arg !== flag)return [];
   const value=argv[i+1];

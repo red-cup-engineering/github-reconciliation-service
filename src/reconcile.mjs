@@ -24,6 +24,10 @@ export async function listRepos(client, orgs) {
  */
 export async function reconcileRepo(client, repo, options = {}) {
   const { apply = false, mergeGreenPulls = false, receiveEquivalent = false, maxEquivalentMerges = 8, closeIssues = false, mergeMethod = "squash", maxMerges = 25, minAgeDays = 2, now = new Date().toISOString() } = options;
+  // This public reader has no authenticated original Work/independent consumer
+  // disposition. A parent workflow's GITHUB_TOKEN or generic --apply flag does
+  // not grant ref retirement, issue closure or PR integration authority.
+  if (apply) throw new TypeError("Original Work/consumer receiving required: use the native revision-bound GitHub Engineering integrator, not this source observer");
   const actions = [];
   const debts = [];
   const note = (kind, target, extra = {}) => actions.push({ kind, repo, target, applied: false, ...extra });
