@@ -76,3 +76,11 @@ test("--apply refuses before credential access or GitHub network requests",()=>{
  assert.match(command.stderr,/--apply refused/u);
  assert.doesNotMatch(command.stderr,/no token:/u);
 });
+
+test("--register refuses before credential access and never creates orphan debt JSON",()=>{
+ const attempt=spawnSync(process.execPath,[cli,"--repo","o/r","--register","/tmp/unused"],{
+   encoding:"utf8",env:{...process.env,GITHUB_TOKEN:"",CREDENTIALS_DIRECTORY:""}});
+ assert.notEqual(attempt.status,0);
+ assert.match(attempt.stderr,/--register refused/u);
+ assert.doesNotMatch(attempt.stderr,/no token:/u);
+});

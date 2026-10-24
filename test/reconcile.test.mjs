@@ -339,10 +339,11 @@ test("unavailable GitHub check-runs cannot be masked by passing commit statuses"
   routes["GET /repos/o/r/commits/g1/status"] = { total_count: 1, state: "success" };
   const { client, writes } = fake(routes);
   const result = await reconcileRepo(client, repo, {
-    apply: true, mergeGreenPulls: true, now: NOW,
+    mergeGreenPulls: true, now: NOW,
   });
-  assert.ok(!writes.some(w => w.method === "PUT" && w.path.includes("/merge")));
+  assert.deepEqual(writes,[],"an unavailable check source cannot cause any effect");
   assert.ok(result.debts.some(d => d.id.includes("checks-unavailable")));
+  assert.equal(result.actions.some(a=>a.kind==="receive-pull-source"&&a.target===5),false);
 });
 
 test("source-observer never issues even a seemingly successful PR merge",async()=>{
