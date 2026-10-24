@@ -117,7 +117,11 @@ export async function reconcileRepo(client, repo, options = {}) {
         typeof pull.updated_at !== "string" ||
         !Number.isFinite(Date.parse(pull.updated_at)) ||
         (summary.head?.sha !== undefined && summary.head.sha !== pull.head.sha) ||
-        (summary.id !== undefined && summary.id !== pull.id))
+        (summary.id !== undefined && summary.id !== pull.id) ||
+        (pull.head.repo?.id !== undefined &&
+          (!Number.isSafeInteger(pull.head.repo.id) || pull.head.repo.id <= 0)) ||
+        (pull.head.repo?.full_name !== undefined &&
+          (typeof pull.head.repo.full_name !== "string" || !pull.head.repo.full_name)))
       throw new TypeError("Original GitHub pull request identity, revision or source coverage is incomplete");
     seenPullIds.add(pull.id); seenPullNumbers.add(pull.number);
     pullSourceCandidates.push(Object.freeze({
@@ -125,6 +129,9 @@ export async function reconcileRepo(client, repo, options = {}) {
       repositoryId:info.id,repositoryFullName:repo,
       pullRequestId:pull.id,pullRequestNumber:pull.number,
       sourceHeadCommitId:pull.head.sha,sourceBaseCommitId:pull.base.sha,
+      // GitHub numeric repository identity outlives transfers/renames.
+      // A nullable source origin is UNKNOWN, never locally owned by guess.
+      sourceHeadRepositoryId:pull.head.repo?.id ?? null,
       sourceHeadRepositoryFullName:pull.head.repo?.full_name ?? null,
       sourceHeadRefName:"refs/heads/"+pull.head.ref,
       sourceBaseRefName:"refs/heads/"+pull.base.ref,
@@ -159,13 +166,30 @@ export async function reconcileRepo(client, repo, options = {}) {
     }
   }
 
-  // A fork PR can have the same short head ref as an unrelated local
-  // branch. Unknown origin remains conservative; known forks cannot
-  // indefinitely obstruct safe contained local branch retirement.
-  const openPullHeads = new Set(openPulls
-    .filter((pull) => !pull.head?.repo?.full_name ||
-      pull.head.repo.full_name.toLowerCase() === repo.toLowerCase())
-    .map((pull) => pull.head?.ref));
+  // A short PR branch name alone is not a Git relation. Correlate original
+  // pull source ONLY by exact named ref, immutable head OID and stable numeric
+  // originating repository identity. Unknown origin or changed head is a
+  // separate unresolved reading. A known fork with the same ref never
+  // masquerades as this repository's branch or authorizes ref effects.
+  function openPullRelationFor(branch) {
+    const refName="refs/heads/"+branch.name;
+    const exact=[],unresolved=[];
+    for(const pull of pullSourceCandidates) {
+      if(pull.sourceHeadRefName!==refName)continue;
+      const originId=pull.sourceHeadRepositoryId;
+      if(originId!==null && originId!==info.id)continue; // known other repository
+      if(originId===null && pull.sourceHeadRepositoryFullName!==null &&
+        pull.sourceHeadRepositoryFullName.toLowerCase()!==repo.toLowerCase())continue; // named fork
+      if(originId===info.id && pull.sourceHeadCommitId===branch.commit?.sha)
+        exact.push(pull.pullRequestNumber);
+      else
+        unresolved.push(pull.pullRequestNumber); // no source ID, or changed head
+    }
+    return Object.freeze({
+      matchingOpenPullRequestNumbers:Object.freeze(exact.sort((a,b)=>a-b)),
+      unresolvedOpenPullRequestNumbers:Object.freeze(unresolved.sort((a,b)=>a-b)),
+    });
+  }
   const originalDefaultHead=branches.find(branch=>branch.name===defaultBranch)?.commit?.sha;
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(originalDefaultHead ?? ""))
     throw new TypeError("observed default source is required before tag or branch action");
@@ -191,6 +215,8 @@ export async function reconcileRepo(client, repo, options = {}) {
   for (const branch of branches) {
     if (branch.name === defaultBranch) continue;
     const compare = await client.request("GET", `/repos/${repo}/compare/${path(defaultBranch)}...${path(branch.name)}`).catch(() => null);
+    const pullRelation=openPullRelationFor(branch);
+    const openPullHeads=new Set(pullRelation.matchingOpenPullRequestNumbers.length?[branch.name]:[]);
     const cls = branchClass({ branch, defaultBranch, ahead_by: compare?.ahead_by ?? null, openPullHeads, isProtected: branch.protected });
     const aheadCommitCount=Number.isSafeInteger(compare?.ahead_by)&&compare.ahead_by>=0?compare.ahead_by:null;
     const behindCommitCount=Number.isSafeInteger(compare?.behind_by)&&compare.behind_by>=0?compare.behind_by:null;
@@ -209,6 +235,7 @@ export async function reconcileRepo(client, repo, options = {}) {
         defaultBranchName:defaultBranch,observedDefaultCommitId:originalDefaultHead,
         technicalClassification:cls,aheadCommitCount,behindCommitCount,
         mergeBaseCommitId,sourceLineageRelation,
+        ...pullRelation,
         matchingArchiveRefNames:Object.freeze(sourceObservations.filter(x=>
           x.peeledCommitId!==null&&x.peeledCommitId===branch.commit?.sha)
           .map(x=>x.refName).sort()),

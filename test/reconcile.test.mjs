@@ -116,15 +116,15 @@ const world = () => ({
   "GET /repos/o/r/git/matching-refs/tags/archive/": [],
   "GET /repos/o/r/git/ref/heads/main": {ref:"refs/heads/main",object:{type:"commit",sha:"a".repeat(40)}},
   "LIST /repos/o/r/pulls?state=open": [
-    { id:5005, number: 5, head: { ref: "pr-green", sha: "1111111111111111111111111111111111111111" } },
-    { id:5006, number: 6, head: { ref: "pr-red", sha: "2222222222222222222222222222222222222222" } },
+    { id:5005, number: 5, head: { ref: "pr-green", sha: "1111111111111111111111111111111111111111", repo:{id:12345,full_name:"o/r"} } },
+    { id:5006, number: 6, head: { ref: "pr-red", sha: "2222222222222222222222222222222222222222", repo:{id:12345,full_name:"o/r"} } },
   ],
   "LIST /repos/o/r/pulls?state=closed&sort=updated&direction=desc": [
     { number: 3, merged_at: OLD, head: { sha: "s1" }, title: "Carry the thing", body: "Fixes #40", html_url: "u3" },
     { number: 4, merged_at: null, head: { sha: "x" }, title: "closed unmerged", body: "fixes #41" },
   ],
-  "GET /repos/o/r/pulls/5": { id:5005, number: 5, state:"open", title: "green", base: { ref: "main", sha: "3333333333333333333333333333333333333333" }, head: { ref: "pr-green", sha: "1111111111111111111111111111111111111111" }, draft: false, mergeable: true, mergeable_state: "clean", updated_at: OLD, html_url: "u5" },
-  "GET /repos/o/r/pulls/6": { id:5006, number: 6, state:"open", title: "red", base: { ref: "main", sha: "3333333333333333333333333333333333333333" }, head: { ref: "pr-red", sha: "2222222222222222222222222222222222222222" }, draft: false, mergeable: false, mergeable_state: "dirty", updated_at: OLD, html_url: "u6" },
+  "GET /repos/o/r/pulls/5": { id:5005, number: 5, state:"open", title: "green", base: { ref: "main", sha: "3333333333333333333333333333333333333333" }, head: { ref: "pr-green", sha: "1111111111111111111111111111111111111111", repo:{id:12345,full_name:"o/r"} }, draft: false, mergeable: true, mergeable_state: "clean", updated_at: OLD, html_url: "u5" },
+  "GET /repos/o/r/pulls/6": { id:5006, number: 6, state:"open", title: "red", base: { ref: "main", sha: "3333333333333333333333333333333333333333" }, head: { ref: "pr-red", sha: "2222222222222222222222222222222222222222", repo:{id:12345,full_name:"o/r"} }, draft: false, mergeable: false, mergeable_state: "dirty", updated_at: OLD, html_url: "u6" },
   "LIST /repos/o/r/pulls/5/files": [{ filename: "a.txt" }],
   "LIST /repos/o/r/pulls/6/files": [{ filename: "b.txt" }],
   "GET /repos/o/r/compare/3333333333333333333333333333333333333333...main": { files: [{ filename: "z.txt" }] },
@@ -177,6 +177,9 @@ test("original source read reports branch, issue and PR receiving candidates wit
  assert.equal(result.sourceCandidates[0].refName,"refs/heads/done");
   const heldByPr=result.sourceCandidates.find(c=>c.refName==="refs/heads/pr-green");
   assert.equal(heldByPr.technicalClassification,"has-open-pull-request");
+  assert.deepEqual(heldByPr.matchingOpenPullRequestNumbers,[5]);
+  assert.deepEqual(heldByPr.unresolvedOpenPullRequestNumbers,[]);
+  assert.equal(result.pullSourceCandidates[0].sourceHeadRepositoryId,12345);
   assert.equal(heldByPr.automaticRefRetirementAllowed,false);
   assert.equal(heldByPr.originalWorkReceiving,"not-observed");
 });
@@ -558,4 +561,80 @@ test("duplicate, missing or changing original pull identities and SHA witnesses 
       /pull request identity, revision or source coverage is incomplete/u);
     assert.deepEqual(writes,[]);
   }
+});
+
+test("an unknown PR head repository retains source but cannot impersonate a local branch",async()=>{
+ const routes=world();
+ routes["GET /repos/o/r/pulls/5"].head.repo=null;
+ routes["LIST /repos/o/r/pulls?state=open"][0].head.repo=null;
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ const branch=result.sourceCandidates.find(x=>x.refName==="refs/heads/pr-green");
+ assert.equal(branch.technicalClassification,"unique-commits",
+   "unknown PR origin cannot assert an original same-repository open head");
+ assert.deepEqual(branch.matchingOpenPullRequestNumbers,[]);
+ assert.deepEqual(branch.unresolvedOpenPullRequestNumbers,[5]);
+ assert.equal(result.pullSourceCandidates[0].sourceHeadRepositoryId,null);
+ assert.equal(result.pullSourceCandidates[0].sourceHeadRepositoryFullName,null);
+ assert.equal(result.pullSourceCandidates[0].originalWorkReceiving,"not-observed");
+ assert.equal(branch.automaticRefRetirementAllowed,false);
+ assert.deepEqual(writes,[]);
+});
+
+test("same branch name and commit from a known foreign fork never assert local PR source",async()=>{
+ const routes=world();
+ routes["GET /repos/o/r/pulls/5"].head.repo={id:54321,full_name:"forked/r"};
+ routes["LIST /repos/o/r/pulls?state=open"][0].head.repo={id:54321,full_name:"forked/r"};
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ const branch=result.sourceCandidates.find(x=>x.refName==="refs/heads/pr-green");
+ assert.deepEqual(branch.matchingOpenPullRequestNumbers,[]);
+ assert.deepEqual(branch.unresolvedOpenPullRequestNumbers,[]);
+ assert.equal(branch.technicalClassification,"unique-commits");
+ assert.equal(result.pullSourceCandidates[0].sourceHeadRepositoryId,54321);
+ assert.equal(branch.automaticRefRetirementAllowed,false);
+ assert.deepEqual(writes,[]);
+});
+
+test("an open PR still at the same ref but at another SHA is not the branch's exact source",async()=>{
+ const routes=world(),moved="e".repeat(40);
+ routes["GET /repos/o/r/pulls/5"].head.sha=moved;
+ routes["LIST /repos/o/r/pulls?state=open"][0].head.sha=moved;
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ const branch=result.sourceCandidates.find(x=>x.refName==="refs/heads/pr-green");
+ assert.deepEqual(branch.matchingOpenPullRequestNumbers,[]);
+ assert.deepEqual(branch.unresolvedOpenPullRequestNumbers,[5]);
+ assert.equal(branch.technicalClassification,"unique-commits");
+ assert.equal(result.pullSourceCandidates[0].sourceHeadCommitId,moved);
+ assert.equal(branch.originalWorkReceiving,"not-observed");
+ assert.deepEqual(writes,[]);
+});
+
+test("a protected branch still keeps exact PR relations, not ref-retirement authority",async()=>{
+ const routes=world();
+ routes["LIST /repos/o/r/branches"][4].protected=true;
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ const branch=result.sourceCandidates.find(x=>x.refName==="refs/heads/pr-green");
+ assert.equal(branch.technicalClassification,"protected");
+ assert.deepEqual(branch.matchingOpenPullRequestNumbers,[5]);
+ assert.equal(branch.automaticRefRetirementAllowed,false);
+ assert.deepEqual(writes,[]);
+});
+
+test("malformed GitHub PR originating repository identities refuse source census",async()=>{
+ for(const headRepo of [
+  {id:0,full_name:"o/r"},
+  {id:"12345",full_name:"o/r"},
+  {id:12345,full_name:""},
+  {id:12345,full_name:42}
+ ]){
+  const routes=world();
+  routes["GET /repos/o/r/pulls/5"].head.repo=headRepo;
+  const {client,writes}=fake(routes);
+  await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
+   /pull request identity, revision or source coverage is incomplete/u);
+  assert.deepEqual(writes,[]);
+ }
 });
