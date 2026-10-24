@@ -1,6 +1,6 @@
 import { branchClass, checksState, SOURCE_CONTAINMENT_CLASSES, issueClosers, pullClass } from "./classify.mjs";
 import { debtRecord } from "./debt-record.mjs";
-import { receiveEquivalentBranch } from "./receive-equivalent.mjs";
+import { assessEquivalentBranchSource } from "./receive-equivalent.mjs";
 import { observeArchiveRefSources } from "./archive-ref-observation.mjs";
 
 const path = (value) => value.split("/").map(encodeURIComponent).join("/");
@@ -206,7 +206,7 @@ export async function reconcileRepo(client, repo, options = {}) {
       if (receiveEquivalent && !branch.protected && originalDefaultHead &&
           Number.isSafeInteger(maxEquivalentMerges) &&
           equivalentReceipts < maxEquivalentMerges) {
-        const receipt=await receiveEquivalentBranch(client,{
+        const receipt=await assessEquivalentBranchSource(client,{
           repo,base:defaultBranch,branch:branch.name,headSha:branch.commit.sha,
           baseSha:originalDefaultHead,compare,apply,
         });

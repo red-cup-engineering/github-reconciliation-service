@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { receiveEquivalentBranch } from "../src/receive-equivalent.mjs";
+import {receiveEquivalentBranch,assessEquivalentBranchSource} from "../src/receive-equivalent.mjs";
 
 function fixture({same=true,autoDelete=true,protectedRef=false,changedMain=false,
   mergeBlocked=false,extraPR=false}={}){
@@ -59,6 +59,10 @@ test("dry-run receives no historical commits and creates no PR",async()=>{
  const {client,calls,args}=fixture();
  const r=await receiveEquivalentBranch(client,{...args,apply:false});
  assert.equal(r.reason,"dry-run");
+ assert.equal(r.recordKind,"github.branch-source-equivalence-assessment/v1");
+ assert.equal(r.effectPermitted,false);
+ assert.equal(r.automaticRefRetirementAllowed,false);
+ assert.equal(receiveEquivalentBranch,assessEquivalentBranchSource);
  assert.equal(r.received,false);
  assert.equal(r.fileCount,1);
  assert.ok(calls.every(x=>x.method==="GET"));
