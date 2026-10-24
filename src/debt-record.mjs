@@ -6,6 +6,8 @@ const REPAIR = {
   "checks-failing": "Read the failing check run, fix the cause in the pull request, and push.",
   "checks-pending": "Wait for the checks on the head commit; a check that never starts is a runner fault to record.",
   "no-checks": "No check ran on the head commit; run the repository's change test or add the workflow.",
+  "checks-unavailable": "The GitHub check-runs or commit-status source could not be fully observed. Recheck the provider response, token scope, rate limits and collection pagination; do not approve the merge based on the other source alone.",
+  "merge-receipt-unverified": "The merge request has an unknown or contradictory provider result. Read back the exact PR head, merged state and merge commit SHA before deciding whether a retry, issue closure or independent receiving is lawful.",
   "superseded-by-changes-on-default": "Every file this pull request changes was changed on the default branch afterwards; confirm it is superseded and close it with a reason, or rebase.",
   "mergeability-unknown": "GitHub has not computed mergeability; the next pulse reads it again.",
   "not-against-default": "The pull request targets a branch other than the default; retarget or close it.",
