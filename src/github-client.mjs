@@ -37,13 +37,31 @@ export function createClient({ token, fetchImpl = globalThis.fetch, base = "http
     request: async (method, path, body) => (await raw(method, path, body)).data,
     async paginate(path, { maxPages = 10 } = {}) {
       const items = [];
+      let expectedCheckRuns = null;
       let next = path + (path.includes("?") ? "&" : "?") + "per_page=100";
       for (let page = 0; next && page < maxPages; page += 1) {
         const { data, response } = await raw("GET", next);
-        items.push(...(Array.isArray(data) ? data : data?.items ?? []));
+        // GitHub's checks endpoint returns { total_count, check_runs }, not
+        // { items }. Treat an unknown envelope as an incomplete observation,
+        // never as a successful empty inventory of checks.
+        const checkRunsPage = !Array.isArray(data) && Array.isArray(data?.check_runs);
+        const rows = Array.isArray(data) ? data
+          : checkRunsPage ? data.check_runs : Array.isArray(data?.items) ? data.items : null;
+        if (!rows) throw new TypeError("GitHub pagination returned an unsupported collection envelope");
+        if (checkRunsPage) {
+          if (!Number.isSafeInteger(data.total_count) || data.total_count < 0)
+            throw new TypeError("GitHub check-run collection lacks a valid total_count");
+          if (expectedCheckRuns !== null && data.total_count !== expectedCheckRuns)
+            throw new RangeError("GitHub check-run total changed during pagination");
+          expectedCheckRuns = data.total_count;
+        } else if (expectedCheckRuns !== null) {
+          throw new TypeError("GitHub check-run collection changed shape across pages");
+        }
+        items.push(...rows);
         next = /<([^>]+)>;\s*rel="next"/u.exec(response.headers.get("link") ?? "")?.[1] ?? null;
       }
-      if (next) throw new RangeError("GitHub pagination incomplete: refuse a partial inventory");
+      if (next || (expectedCheckRuns !== null && items.length !== expectedCheckRuns))
+        throw new RangeError("GitHub pagination incomplete: refuse a partial inventory");
       return items;
     },
   };
