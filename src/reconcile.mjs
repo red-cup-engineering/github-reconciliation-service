@@ -32,6 +32,7 @@ export async function reconcileRepo(client, repo, options = {}) {
   const actions = [];
   const debts = [];
   const sourceCandidates = [];
+  const pullSourceCandidates = [];
   const originalIssueSources = [];
   const note = (kind, target, extra = {}) => actions.push({ kind, repo, target, applied: false, ...extra });
   const old = (iso) => Date.parse(now) - Date.parse(iso) >= minAgeDays * DAY;
@@ -78,8 +79,9 @@ export async function reconcileRepo(client, repo, options = {}) {
     }));
   }
 
-  // Qualify current pull source; no merge can occur in a source observation.
-
+  // Every open pull request is original source, including draft, contested,
+  // non-default-target and unread CI cases. A green subset is NOT the inventory.
+  const seenPullIds = new Set(), seenPullNumbers = new Set();
   for (const summary of openPulls) {
     const pull = await client.request("GET", `/repos/${repo}/pulls/${summary.number}`);
     const files = (await client.paginate(`/repos/${repo}/pulls/${pull.number}/files`)).map((file) => file.filename);
@@ -104,6 +106,37 @@ export async function reconcileRepo(client, repo, options = {}) {
     const provisional = pullClass({ pull, checks, files, changedOnBase, defaultBranch });
     const cls=!comparisonComplete&&provisional==="green-and-mergeable"
       ?"base-difference-incomplete":provisional;
+    if (!Number.isSafeInteger(pull.id) || pull.id <= 0 ||
+        !Number.isSafeInteger(pull.number) || pull.number <= 0 ||
+        pull.number !== summary.number || pull.state !== "open" ||
+        seenPullIds.has(pull.id) || seenPullNumbers.has(pull.number) ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(pull.head?.sha ?? "") ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(pull.base?.sha ?? "") ||
+        typeof pull.head?.ref !== "string" || !pull.head.ref ||
+        typeof pull.base?.ref !== "string" || !pull.base.ref ||
+        typeof pull.updated_at !== "string" ||
+        !Number.isFinite(Date.parse(pull.updated_at)) ||
+        (summary.head?.sha !== undefined && summary.head.sha !== pull.head.sha) ||
+        (summary.id !== undefined && summary.id !== pull.id))
+      throw new TypeError("Original GitHub pull request identity, revision or source coverage is incomplete");
+    seenPullIds.add(pull.id); seenPullNumbers.add(pull.number);
+    pullSourceCandidates.push(Object.freeze({
+      recordKind:"github.pull-source-observation/v1",
+      repositoryId:info.id,repositoryFullName:repo,
+      pullRequestId:pull.id,pullRequestNumber:pull.number,
+      sourceHeadCommitId:pull.head.sha,sourceBaseCommitId:pull.base.sha,
+      sourceHeadRepositoryFullName:pull.head.repo?.full_name ?? null,
+      sourceHeadRefName:"refs/heads/"+pull.head.ref,
+      sourceBaseRefName:"refs/heads/"+pull.base.ref,
+      pullRequestUpdatedAt:pull.updated_at,pullRequestState:"open",
+      technicalClassification:cls,checkEvidenceState:checks,
+      baseDifferenceCoverage:comparisonComplete?"complete":"incomplete",
+      changedFileCount:files.length,
+      sourceCoverage:"paged-current-open-github-pulls",
+      originalWorkReceiving:"not-observed",ordinaryConsumerReceiving:"not-observed",
+      automaticPullMergeAllowed:false,
+      firstReceivingAction:"read-original-proposal-requirements-exact-source-and-ordinary-consumer",
+    }));
     // The observer has no merge actuator. A historical mutation limit must
     // never hide genuine PR source candidates from Work receiving.
     if (cls === "green-and-mergeable") {
@@ -249,6 +282,7 @@ export async function reconcileRepo(client, repo, options = {}) {
   }
   return { repo, actions, debts, sourceObservations,
     sourceCandidates:Object.freeze(sourceCandidates),
+    pullSourceCandidates:Object.freeze(pullSourceCandidates),
     originalIssueSources:Object.freeze(originalIssueSources),
     originalWorkReceiving:"not-observed",effectAuthority:"none; native Work receiving required" };
 }
@@ -261,6 +295,7 @@ export function summarize(results) {
     equivalentCandidates:count("assess-equivalent-branch-source").length,
     branchesDeletable:0,
     branchSourceCandidates:results.reduce((n,r)=>n+(r.sourceCandidates?.length??0),0),
+    originalPullsObserved:results.reduce((n,r)=>n+(r.pullSourceCandidates?.length??0),0),
     pullRequestsMerged:0,pullRequestsMergeable:count("receive-pull-source").length,
     issuesClosed:0,issuesClosable:0,
     issueOutcomeCandidates:count("receive-issue-outcome").length,
