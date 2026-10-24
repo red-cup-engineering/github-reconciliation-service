@@ -1,6 +1,6 @@
-import { branchClass, checksState, DELETABLE_BRANCH_CLASSES, issueClosers, pullClass } from "./classify.mjs";
+import { branchClass, checksState, SOURCE_CONTAINMENT_CLASSES, issueClosers, pullClass } from "./classify.mjs";
 import { debtRecord } from "./debt-record.mjs";
-import { receiveEquivalentBranch } from "./receive-equivalent.mjs";
+import { assessEquivalentBranchSource } from "./receive-equivalent.mjs";
 import { observeArchiveRefSources } from "./archive-ref-observation.mjs";
 
 const path = (value) => value.split("/").map(encodeURIComponent).join("/");
@@ -18,14 +18,21 @@ export async function listRepos(client, orgs) {
 }
 
 /**
- * Reconcile one repository. Reads are always made. Writes (delete a contained branch, merge a green
- * pull request, close an issue a merged pull request fixed) are made only with `apply`; every other
- * item becomes a debt record. Nothing is archived and no repository is deleted.
+ * Read one original GitHub repository's open Work/source and archive ref relations.
+ * Source containment, checks, and closing keywords are evidence, not effect authority.
+ * This public component has no write path; native GitHub Engineering handles exact
+ * Work- and consumer-received integration and retirement. Nothing is archived.
  */
 export async function reconcileRepo(client, repo, options = {}) {
   const { apply = false, mergeGreenPulls = false, receiveEquivalent = false, maxEquivalentMerges = 8, closeIssues = false, mergeMethod = "squash", maxMerges = 25, minAgeDays = 2, now = new Date().toISOString() } = options;
+  // This public reader has no authenticated original Work/independent consumer
+  // disposition. A parent workflow's GITHUB_TOKEN or generic --apply flag does
+  // not grant ref retirement, issue closure or PR integration authority.
+  if (apply) throw new TypeError("Original Work/consumer receiving required: use the native revision-bound GitHub Engineering integrator, not this source observer");
   const actions = [];
   const debts = [];
+  const sourceCandidates = [];
+  const originalIssueSources = [];
   const note = (kind, target, extra = {}) => actions.push({ kind, repo, target, applied: false, ...extra });
   const old = (iso) => Date.parse(now) - Date.parse(iso) >= minAgeDays * DAY;
 
@@ -33,20 +40,56 @@ export async function reconcileRepo(client, repo, options = {}) {
   const defaultBranch = info.default_branch;
   if (!Number.isSafeInteger(info.id) || info.id <= 0 || !defaultBranch)
     throw new TypeError("source owner repository ID and default branch not observed");
-  const [branches, openPulls, closedPulls] = await Promise.all([
+  const [branches, openPulls, closedPulls, openIssues] = await Promise.all([
     client.paginate(`/repos/${repo}/branches`),
     client.paginate(`/repos/${repo}/pulls?state=open`),
     client.paginate(`/repos/${repo}/pulls?state=closed&sort=updated&direction=desc`, { maxPages: 3 }),
+    client.paginate(`/repos/${repo}/issues?state=open`),
   ]);
   const mergedPulls = closedPulls.filter((pull) => pull.merged_at);
+  // An issue is a first-class original Work/source candidate even when no
+  // merged PR uses a closing keyword. This is one already-observed GitHub
+  // source list, not a new issue queue or fabricated outcome.
+  const closers = issueClosers(mergedPulls, repo);
+  const seenIssueIds = new Set(), seenIssueNumbers = new Set();
+  for (const issue of openIssues) {
+    if (issue.pull_request) continue;
+    if (!Number.isSafeInteger(issue.id) || issue.id < 1 ||
+        !Number.isSafeInteger(issue.number) || issue.number < 1 ||
+        seenIssueIds.has(issue.id) || seenIssueNumbers.has(issue.number) ||
+        issue.state !== "open" || typeof issue.updated_at !== "string" ||
+        !Number.isFinite(Date.parse(issue.updated_at)))
+      throw new TypeError("Original GitHub issue identity, revision or source coverage is incomplete");
+    seenIssueIds.add(issue.id);seenIssueNumbers.add(issue.number);
+    const closer = closers.get(issue.number) ?? null;
+    originalIssueSources.push(Object.freeze({
+      recordKind: "github.issue-source-observation/v1",
+      repositoryId: info.id, repositoryFullName: repo,
+      issueId: issue.id, issueNumber: issue.number,
+      issueUpdatedAt: issue.updated_at, issueState: "open",
+      closingKeywordMergedPullRequestUrl: closer?.html_url ?? null,
+      sourceCoverage: "paged-current-open-github-issues",
+      originalWorkReceiving: "not-observed",
+      ordinaryConsumerReceiving: "not-observed",
+      automaticIssueClosureAllowed: false,
+      firstReceivingAction: closer
+        ? "reconcile-merged-source-with-original-issue-need-and-beneficiary"
+        : "read-original-issue-requirement-and-ordinary-consumer",
+    }));
+  }
 
-  // Pull requests first, so a merge can make its branch contained in the same pulse.
-  let merges = 0;
+  // Qualify current pull source; no merge can occur in a source observation.
+  let qualifiedPullSources = 0;
   for (const summary of openPulls) {
     const pull = await client.request("GET", `/repos/${repo}/pulls/${summary.number}`);
     const files = (await client.paginate(`/repos/${repo}/pulls/${pull.number}/files`)).map((file) => file.filename);
     const compare = await client.request("GET", `/repos/${repo}/compare/${pull.base.sha}...${path(defaultBranch)}`);
-    const changedOnBase = new Set((compare.files ?? []).map((file) => file.filename));
+    // GitHub caps compare files at 300. Do not treat an incomplete base
+    // difference as an observed safe or superseded source review.
+    const comparisonComplete = Array.isArray(compare?.files)
+      && compare.files.length<300 && compare.too_large!==true;
+    const changedOnBase = new Set(comparisonComplete
+      ?compare.files.map(file=>file.filename):[]);
     const [runsRead, statusRead] = await Promise.allSettled([
       client.paginate(`/repos/${repo}/commits/${pull.head.sha}/check-runs`),
       client.request("GET", `/repos/${repo}/commits/${pull.head.sha}/status`),
@@ -58,41 +101,26 @@ export async function reconcileRepo(client, repo, options = {}) {
       typeof statusRead.value?.state === "string"
       ? checksState({ checkRuns: runsRead.value, status: statusRead.value })
       : "unavailable";
-    const cls = pullClass({ pull, checks, files, changedOnBase, defaultBranch });
-    if (cls === "green-and-mergeable" && merges < maxMerges) {
-      merges += 1;
-      const action = { kind: "merge-pull-request", repo, target: pull.number, class: cls, applied: false, title: pull.title };
-      if (apply && mergeGreenPulls) {
-        // Authorization is explicit; an attempted merge is not a completed
-        // merge. Read back the exact provider outcome before concluding the
-        // PR is merged or allowing its closing keywords to close Work.
-        try {
-          const receipt = await client.request("PUT", `/repos/${repo}/pulls/${pull.number}/merge`,
-            { merge_method: mergeMethod, sha: pull.head.sha });
-          if (receipt?.merged !== true || !/^[a-f0-9]{40}$/u.test(receipt.sha ?? ""))
-            throw new TypeError("GitHub returned no confirmed merge SHA");
-          action.providerAcknowledged = true;
-          action.mergeSha = receipt.sha;
-          const accepted = await client.request("GET", `/repos/${repo}/pulls/${pull.number}`);
-          if (accepted?.number !== pull.number || accepted?.state !== "closed" ||
-              accepted?.merged !== true || !accepted.merged_at ||
-              accepted.merge_commit_sha !== receipt.sha ||
-              accepted.base?.ref !== defaultBranch)
-            throw new TypeError("merged PR readback disagrees with provider merge receipt");
-          action.applied = true;
-          mergedPulls.push(accepted);
-        } catch (error) {
-          debts.push(debtRecord({ repo, kind: "pull-request", id: pull.number,
-            cls: "merge-receipt-unverified", title: pull.title, url: pull.html_url, now,
-            evidence: "Merge requested but its independently read-back state is unknown or contradictory; do not infer closure or retry blindly. " +
-              error.message }));
-        }
-      }
+    const provisional = pullClass({ pull, checks, files, changedOnBase, defaultBranch });
+    const cls=!comparisonComplete&&provisional==="green-and-mergeable"
+      ?"base-difference-incomplete":provisional;
+    if (cls === "green-and-mergeable" && qualifiedPullSources < maxMerges) {
+      qualifiedPullSources += 1;
+      const action = { kind: "receive-pull-source", repo, target: pull.number, class: cls,
+        recordKind:"github.pull-source-review-candidate/v1",sourceHeadCommitId:pull.head.sha,
+        sourceBaseCommitId:pull.base.sha, applied:false,title:pull.title,
+        originalWorkReceiving:"not-observed",ordinaryConsumerReceiving:"not-observed",
+        mergeAuthority:"not-granted-by-observer" };
+      // An assessed pull request does not author or merge its source.
       actions.push(action);
     } else if (cls !== "draft" && cls !== "mergeability-unknown" && old(pull.updated_at)) {
       debts.push(debtRecord({ repo, kind: "pull-request", id: pull.number, cls, title: pull.title, url: pull.html_url, now,
         ...(cls === "checks-unavailable"
           ? { evidence: "GitHub check runs or commit statuses could not be fully observed; no green merge qualification." }
+          : cls === "base-difference-incomplete"
+          ? { evidence: "GitHub returned an incomplete original base difference; neither nonconflict nor supersession was established." }
+          : cls === "same-files-changed-on-default"
+          ? { evidence: "Only filenames overlap; the original behavior and ordinary consumer are not yet reconciled." }
           : {}) }));
     }
   }
@@ -129,8 +157,33 @@ export async function reconcileRepo(client, repo, options = {}) {
     if (branch.name === defaultBranch) continue;
     const compare = await client.request("GET", `/repos/${repo}/compare/${path(defaultBranch)}...${path(branch.name)}`).catch(() => null);
     const cls = branchClass({ branch, defaultBranch, ahead_by: compare?.ahead_by ?? null, openPullHeads, isProtected: branch.protected });
-    if (DELETABLE_BRANCH_CLASSES.has(cls)) {
-      const action = { kind: "delete-branch", repo, target: branch.name, class: cls, applied: false };
+    const aheadCommitCount=Number.isSafeInteger(compare?.ahead_by)&&compare.ahead_by>=0?compare.ahead_by:null;
+    const behindCommitCount=Number.isSafeInteger(compare?.behind_by)&&compare.behind_by>=0?compare.behind_by:null;
+    const mergeBaseCommitId=/^[a-f0-9]{40}$/u.test(compare?.merge_base_commit?.sha??"")
+      ?compare.merge_base_commit.sha:null;
+    const sourceLineageRelation=aheadCommitCount===null||behindCommitCount===null||mergeBaseCommitId===null
+      ?"not-observed":aheadCommitCount>0&&behindCommitCount>0?"diverged"
+      :aheadCommitCount>0?"branch-ahead":behindCommitCount>0?"branch-behind":"identical";
+    if(["contained-in-default","unique-commits"].includes(cls))
+      sourceCandidates.push(Object.freeze({
+        recordKind:"github.branch-source-reconciliation-candidate/v1",
+        repositoryId:info.id,repositoryFullName:repo,refName:"refs/heads/"+branch.name,
+        headCommitId:branch.commit?.sha??null,
+        defaultBranchName:defaultBranch,observedDefaultCommitId:originalDefaultHead,
+        technicalClassification:cls,aheadCommitCount,behindCommitCount,
+        mergeBaseCommitId,sourceLineageRelation,
+        matchingArchiveRefNames:Object.freeze(sourceObservations.filter(x=>
+          x.peeledCommitId!==null&&x.peeledCommitId===branch.commit?.sha)
+          .map(x=>x.refName).sort()),
+        originalWorkReceiving:"not-observed",ordinaryConsumerReceiving:"not-observed",
+        automaticRefRetirementAllowed:false,
+        firstReceivingAction:"reconcile-source-requirements-issues-and-ordinary-consumer-at-native-github-owner"
+      }));
+    if (SOURCE_CONTAINMENT_CLASSES.has(cls)) {
+      const action = { kind: "receive-contained-branch-source", repo, target: branch.name,
+        recordKind:"github.branch-source-reconciliation-candidate/v1",
+        class:cls,applied:false,refRetirementAllowed:false,
+        originalWorkReceiving:"not-observed" };
       // A retained archive-named tag referencing the same commit is evidence
       // of a still-open original source and issue/consumer custody question.
       // Even a contained commit is NOT consent to retire the branch's name.
@@ -143,34 +196,6 @@ export async function reconcileRepo(client, repo, options = {}) {
         actions.push(action);
         continue;
       }
-      if (apply) {
-        let head, branchNow, latest, openNow;
-        try {
-          [head, branchNow, latest, openNow] = await Promise.all([
-            client.request("GET", `/repos/${repo}/git/ref/heads/${path(branch.name)}`),
-            client.request("GET", `/repos/${repo}/branches/${path(branch.name)}`),
-            client.request("GET", `/repos/${repo}/compare/${path(defaultBranch)}...${path(branch.name)}`),
-            client.paginate(`/repos/${repo}/pulls?state=open&head=${encodeURIComponent(repo.split("/")[0] + ":" + branch.name)}`),
-          ]);
-        } catch (error) {
-          debts.push(debtRecord({ repo, kind:"branch", id:branch.name,
-            cls:"changed-during-reconciliation", now,
-            evidence:"Pre-delete verification unavailable; ref left intact: "+error.message }));
-          actions.push(action);
-          continue;
-        }
-        if (head.object?.sha !== branch.commit.sha ||
-            branchNow.commit?.sha !== branch.commit.sha ||
-            branchNow.protected !== false || latest.ahead_by !== 0 ||
-            !Array.isArray(openNow) || openNow.length !== 0) {
-          debts.push(debtRecord({ repo, kind:"branch", id:branch.name,
-            cls:"changed-during-reconciliation", now,
-            evidence:"Head, protection, open PRs, or containment changed; ref left intact." }));
-        } else {
-          await client.request("DELETE", `/repos/${repo}/git/refs/heads/${path(branch.name)}`);
-          action.applied = true;
-        }
-      }
       actions.push(action);
     } else if (cls === "unique-commits") {
       // Distinct commits are NEVER deleted outright. With an explicit
@@ -181,24 +206,21 @@ export async function reconcileRepo(client, repo, options = {}) {
       if (receiveEquivalent && !branch.protected && originalDefaultHead &&
           Number.isSafeInteger(maxEquivalentMerges) &&
           equivalentReceipts < maxEquivalentMerges) {
-        const receipt=await receiveEquivalentBranch(client,{
+        const receipt=await assessEquivalentBranchSource(client,{
           repo,base:defaultBranch,branch:branch.name,headSha:branch.commit.sha,
           baseSha:originalDefaultHead,compare,apply,
         });
         if (receipt.fileCount>0) {
           equivalentReceipts++;
           actions.push({
-            kind:"receive-equivalent-branch",repo,target:branch.name,
-            class:"content-equivalent",applied:receipt.received,
-            deleted:receipt.deleted,prNumber:receipt.prNumber??null,
+            kind:"assess-equivalent-branch-source",repo,target:branch.name,
+            class:"source-byte-equivalent",applied:false,effectPermitted:false,
+            automaticRefRetirementAllowed:false,
+            originalWorkReceiving:"not-observed",ordinaryConsumerReceiving:"not-observed",
+            firstReceivingAction:"receive-distinct-source-history-and-ordinary-consumer-at-native-owner",
             verifiedFiles:receipt.fileCount,reason:receipt.reason,
           });
-          if (apply && (!receipt.received || !receipt.deleted))
-            debts.push(debtRecord({repo,kind:"branch",id:branch.name,
-              cls:"equivalent-receiving-blocked",now,
-              evidence:"Equivalent history was not fully received and retired: "+
-                receipt.reason+(receipt.detail?" "+receipt.detail:"")+
-                (receipt.closeProblem?"; PR close failed: "+receipt.closeProblem:"")}));
+          // A proven byte identity is not a received Git history or operating result.
           continue;
         }
       }
@@ -208,57 +230,42 @@ export async function reconcileRepo(client, repo, options = {}) {
     }
   }
 
-  const closers = issueClosers(mergedPulls, repo);
-  if (closeIssues && closers.size) {
-    for (const issue of await client.paginate(`/repos/${repo}/issues?state=open`)) {
+  if (closers.size) {
+    for (const issue of openIssues) {
       const pull = closers.get(issue.number);
       if (!pull || issue.pull_request) continue;
-      const action = { kind: "close-issue", repo, target: issue.number, class: "fixed-by-merged-pull-request", applied: false, by: pull.html_url };
-      if (apply) {
-        // A completed HTTP request is not a provider-observed issue state.
-        // Retain an unconfirmed closure as debt; never repeat a write blindly.
-        try{
-          await client.request("POST", `/repos/${repo}/issues/${issue.number}/comments`,
-            { body: `Closed because ${pull.html_url} merged and states that it fixes this issue.` });
-          await client.request("PATCH", `/repos/${repo}/issues/${issue.number}`,
-            { state: "closed", state_reason: "completed" });
-          const readback=await client.request("GET",`/repos/${repo}/issues/${issue.number}`);
-          if(readback?.number!==issue.number || readback?.state!=="closed" ||
-             readback?.state_reason!=="completed" || Boolean(readback?.pull_request))
-            throw new TypeError("GitHub issue closure readback was not independently received");
-          action.applied=true;
-          action.providerIssueState="closed";
-          action.originalWorkReceived=false; // GitHub issue status does not grant original Work closure.
-        }catch(error){
-          action.reason="issue-closure-readback-unverified";
-          debts.push(debtRecord({repo,kind:"issue",id:issue.number,
-            cls:"issue-closure-readback-unverified",now,
-            evidence:"GitHub issue closure attempted but the exact provider state is unknown or contradicted. Independently reconcile before retry."}));
-        }
-      }
+      const action = { kind: "receive-issue-outcome", repo, target: issue.number,
+        recordKind:"github.issue-outcome-receiving-candidate/v1",
+        class:"named-by-merged-pull-request",applied:false,by:pull.html_url,
+        originalWorkReceiving:"not-observed",independentBeneficiaryReceiving:"not-observed",
+        automaticClosureAllowed:false };
+      // A GitHub closing keyword cannot close original Work.
       actions.push(action);
     }
   }
-  return { repo, actions, debts, sourceObservations };
+  return { repo, actions, debts, sourceObservations,
+    sourceCandidates:Object.freeze(sourceCandidates),
+    originalIssueSources:Object.freeze(originalIssueSources),
+    originalWorkReceiving:"not-observed",effectAuthority:"none; native Work receiving required" };
 }
 
 export function summarize(results) {
   const count = (kind) => results.flatMap((result) => result.actions).filter((action) => action.kind === kind);
   return {
     repos: results.length,
-    branchesDeleted: count("delete-branch").filter((action) => action.applied).length+
-      count("receive-equivalent-branch").filter((action)=>action.deleted).length,
-    equivalentHistoryReceived:count("receive-equivalent-branch").filter((action)=>action.applied).length,
-    equivalentHistoryRetired:count("receive-equivalent-branch").filter((action)=>action.deleted).length,
-    equivalentCandidates:count("receive-equivalent-branch").length,
-    branchesDeletable: count("delete-branch").length,
-    pullRequestsMerged: count("merge-pull-request").filter((action) => action.applied).length,
-    pullRequestsMergeable: count("merge-pull-request").length,
-    issuesClosed: count("close-issue").filter((action) => action.applied).length,
-    issuesClosable: count("close-issue").length,
+    branchesDeleted:0, equivalentHistoryReceived:0,equivalentHistoryRetired:0,
+    equivalentCandidates:count("assess-equivalent-branch-source").length,
+    branchesDeletable:0,
+    branchSourceCandidates:results.reduce((n,r)=>n+(r.sourceCandidates?.length??0),0),
+    pullRequestsMerged:0,pullRequestsMergeable:count("receive-pull-source").length,
+    issuesClosed:0,issuesClosable:0,
+    issueOutcomeCandidates:count("receive-issue-outcome").length,
+    originalIssuesObserved:results.reduce((count,result)=>
+      count+(result.originalIssueSources?.length??0),0),
     archiveTagSourcesObserved: results.reduce((total,result)=>total+(result.sourceObservations?.length ?? 0),0),
     archiveTagSourcesAwaitingReceiving: results.reduce((total,result)=>total+(result.sourceObservations?.filter(x=>x.independentReceivingRequired).length ?? 0),0),
-    branchesHeldByArchiveSource: count("delete-branch").filter(x=>x.refRetirementAllowed===false).length,
+    branchesHeldByArchiveSource:results.reduce((n,r)=>n+(r.sourceCandidates?.filter(
+      x=>x.matchingArchiveRefNames.length).length??0),0),
     debtRecords: results.reduce((total, result) => total + result.debts.length, 0),
   };
 }

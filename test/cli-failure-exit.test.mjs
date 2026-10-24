@@ -21,6 +21,7 @@ globalThis.fetch = async (url, init) => {
     "/repos/o/r": { id: 12345, default_branch: "main" },
     "/repos/o/r/branches": [{name:"main",protected:false,commit:{sha:"a".repeat(40)}}],
     "/repos/o/r/pulls": [],
+    "/repos/o/r/issues": [],
     "/repos/o/r/git/matching-refs/tags/archive/": []
   };
   const allowed = init.method === "GET" && Object.hasOwn(routes, path);
@@ -46,6 +47,8 @@ globalThis.fetch = async (url, init) => {
     assert.deepEqual(success.errors, []);
     assert.equal(success.archiveRefCoverage,"complete-for-observed-repositories");
     assert.deepEqual(success.archiveRefSources,[]);
+    assert.deepEqual(success.originalIssueSources,[]);
+    assert.equal(success.originalIssuesObserved,0);
     assert.equal(success.archiveTagSourcesObserved,0);
 
     const mixed = invoke("o/r", "x/y");
@@ -65,4 +68,22 @@ globalThis.fetch = async (url, init) => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The actual CLI must refuse unreceived effects even without a token.
+// This is a process-level native boundary, not only an imported helper.
+test("--apply refuses before credential access or GitHub network requests",()=>{
+ const command=spawnSync(process.execPath,[cli,"--repo","o/r","--apply"],{
+   encoding:"utf8",env:{...process.env,GITHUB_TOKEN:"",CREDENTIALS_DIRECTORY:""}});
+ assert.notEqual(command.status,0);
+ assert.match(command.stderr,/--apply refused/u);
+ assert.doesNotMatch(command.stderr,/no token:/u);
+});
+
+test("--register refuses before credential access and never creates orphan debt JSON",()=>{
+ const attempt=spawnSync(process.execPath,[cli,"--repo","o/r","--register","/tmp/unused"],{
+   encoding:"utf8",env:{...process.env,GITHUB_TOKEN:"",CREDENTIALS_DIRECTORY:""}});
+ assert.notEqual(attempt.status,0);
+ assert.match(attempt.stderr,/--register refused/u);
+ assert.doesNotMatch(attempt.stderr,/no token:/u);
 });

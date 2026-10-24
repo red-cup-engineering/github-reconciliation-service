@@ -7,29 +7,33 @@
 [![Tips welcome](https://img.shields.io/badge/tips-welcome-d4a017)](https://github.com/561-group/.github/blob/main/TIPS.md)
 <!-- 561-group-standards:badges:end -->
 
-Settles the open pull requests, branches and issues of the 561 Group organizations without a model in the loop.
+Observes the Group's original GitHub issues, pull requests, divergent
+branches and archive-tagged code **without a model in the loop**. It is a
+provider SOURCE reader, not the native original Work, consumer receiving or
+revision-leased GitHub merge/issue/ref-retirement actuator.
 
+```sh
+github-reconcile --org red-cup-engineering --org 561-group [--repo OWNER/NAME]
+                 [--receive-equivalent] [--max-equivalents 8]
+                 [--min-age-days 2]
 ```
-github-reconcile --org red-cup-engineering --org 561-group [--repo OWNER/NAME] [--apply]
-                 [--merge-green-pulls] [--receive-equivalent] [--max-equivalents 8]
-                 [--close-issues] [--register DIR]
-                 [--merge-method squash] [--max-merges 25] [--min-age-days 2]
-```
 
-Without `--apply` it reads and reports. With `--apply` it prunes
-**proven contained, unprotected branches**; qualified ordinary PR merges
-additionally require `--merge-green-pulls`, and closing issues separately
-requires `--close-issues`. Historical commits with *identical current content*
-can be received and retired only with `--receive-equivalent`. This prevents merely asking to clean obsolete refs from
-silently merging a proposal or changing an issue. Supply at least one
-`--repo` or `--org`; invalid or empty scopes are refused. Duplicate targets
-are deduplicated, and malformed limits refuse before mutation.
+The historical `--apply` and `--register` write-only-debt-file modes are
+**refused before credential acquisition**. A GitHub token and the technical
+fact that a branch is contained in another are not permission to delete that
+branch; matching blobs do not receive the original requirements or consumers.
+The one original machine-readable CLI result remains the output carrier, and
+the same existing caller processes it rather than duplicating a debt register.
 
-The token is `$GITHUB_TOKEN` or the systemd credential `github-token`.
-The REST client refuses a pagination Link to any origin other than the
-authorized GitHub API origin, even if the Link came from an authenticated
-response. Any incomplete page inventory refuses rather than deleting based
-on a partial set.
+The `branchSourceCandidates` in this output carry original GitHub repository
+ID, standard fully-qualified `refs/heads/...` name, branch and default
+commit identity, `aheadCommitCount`, `behindCommitCount`, actual
+`mergeBaseCommitId` when available, a `sourceLineageRelation`,
+matching archive-tag refs, explicit unobserved Work/consumer receiving and
+`automaticRefRetirementAllowed:false`. Missing source means unknown,
+never a passed test, resolved issue or an authorized effect. Technical
+classifications and GitHub's current revision may each be useful evidence,
+but neither is a normative institutional acceptance decision.
 
 ## Unprocessed source behind archive-named tags
 
@@ -89,51 +93,71 @@ writes historical debt-register files and does **not** demonstrate an
 installed independent reader; the new tag source is intentionally consumed
 via original runtime JSON output instead of adding more orphan JSON.
 
-## Classes and actions
+## Source-to-receiving classes, not automatically executable actions
 
-| Item | Test | Action |
-| --- | --- | --- |
-| Branch | `compare` shows `ahead_by` 0; immediately before deletion, the original SHA, branch protection, fresh ahead count and newly opened PRs are independently rechecked | Delete the branch only if all checks pass. A squash-merged PR head is not sufficient evidence. |
-| Branch | has unique commits but every changed, bounded file/Gitlink blob matches the current default branch | With explicit `--receive-equivalent`, merge the history using a real PR then recheck/retire the source branch; otherwise report candidate. Refuse truncated diffs, deletions, renames, unreadable or unequal blobs. |
-| Branch | has genuinely new or unverifiable commits, last commit older than `--min-age-days` | Debt record `unique-commits`. |
-| Branch | default, protected, or has an open pull request | Nothing. |
-| Pull request | `mergeable` true, `mergeable_state` clean, at least one check and all passing, not a draft, against the default branch | Merge only with `--apply --merge-green-pulls` (at most `--max-merges` per run); otherwise report candidate. |
-| Pull request | conflicting, checks failing, no checks, not clean, or every file it changes was changed on the default branch after its base commit | Debt record with that class. |
-| Pull request | draft, or mergeability not yet computed | Nothing. |
-| Issue | named by a closing keyword in a merged pull request | Only with explicit `--close-issues`, comment and close as completed. |
+The existing GitHub comparison and content-equivalence evaluators remain
+operative as read-only evidence. Contained, ahead and divergent branches
+remain distinct; `archive` is a naming convention for a Git ref, never an
+integration receipt. The original native Git Engineering and GitHub Engineering
+owners retain the revision-bound source operations.
 
-Nothing is archived and no repository is deleted. A debt record has the shape of `system-debt-records` in Bare Cedar Fog, written to `--register`.
+A qualified PR can produce `github.pull-source-review-candidate/v1`, not
+an automatic merge. A merged PR that contains a GitHub closing keyword can
+produce `github.issue-outcome-receiving-candidate/v1`, not a completed
+beneficiary outcome. Every branch candidate carries explicitly false
+automatic retirement authority. Use the Group's original Work, Engineering
+qualification, original Coesite independent receiving and the ordinary
+application/operating consumer to resolve useful changes first.
 
-### Event-driven Engineering repo cleanup
+The existing CLI's historical effect counters remain **zero** and
+`branchSourceCandidates`, `equivalentCandidates`,
+`issueOutcomeCandidates` and archive-source counters represent investigation
+frontiers, not debt discharged.
 
-The **declarative** `.github/workflows/github-reconcile-contained-branches.yml`
-in the Engineering parent consumes this single Engineering-owned implementation.
-On source-owner changes, merged PRs and explicitly requested manual dispatch,
-it first runs the original Node tests, then invokes only its own repository
-with `--apply --max-merges 0 --receive-equivalent --max-equivalents 3`.
-This will not merge arbitrary green PRs or close issues: it may receive at
-most three already-matching branch histories per invocation, creating real
-merge commits and closing failed attempts immediately, then verifying source
-branch deletion. GitHub's short-lived workflow token has
-`contents:write` only for that repository; it never sends credentials to
-another host or receives authority over Science/Data/Operations repositories.
-No GitHub Actions cron or ChatGPT Scheduled Task was created. A workflow
-file being committed is **not** evidence a hosted runner started or passed:
-check its actual job conclusion and deletion receipt.
+### Original real consumers, including the former unsafe parent workflow
 
-For additional owners, an authorized Operations receiver must arrange a
-similarly scoped caller, or install the original CLI on credentialed compute.
-Do **not** copy this reconciliation implementation into each repository or
-confuse a source merge, release package, and running service. The CLI's
-`--org` scope is supported when the installed credential really has
-cross-repository permissions; the parent repository's `GITHUB_TOKEN` does not.
+Computer Engineering's source-selected Gitlinks route through Systems and
+Code Development to this GitHub Reconciliation service. The parent workflow
+previously used `--apply` and a write-capable GitHub token on source
+containment alone. [Computer Engineering draft PR #518](https://github.com/red-cup-engineering/computer-engineering-services-section/pull/518)
+removes `--apply`, restricts that particular caller to read-only GitHub
+permissions, and stops generating temporary orphan debt JSON. Its private
+source review/merge and installed workflow selection remain **unverified**,
+not an already-repaired production deployment.
 
-Merging this source does not install or enable its optional systemd timer.
-Operational credentials, host selection, and activation require independent
-receiving.
+The original optional systemd service now retains one source-only output
+stream in the system journal, uses read-only filesystem policy and does not
+write unconsumed `--register` files. The separate six-hour timer is unchanged
+and not enabled here. No new automation, task, credentials or consumer rights
+are created.
 
 ## On Cold Red Gate
 
 `systemd/github-reconcile.timer` and its service file describe an **optional, not-yet-independently-received deployment**. They are not evidence of an installed/active timer, an available sealed credential, a published registry artifact, or completed host receiving. Do not enable the timer merely by merging this source. The intended design uses `LoadCredentialEncrypted` when an authorized host installs it.
 
 `cd services/.../github-reconciliation-service && node --test test/*.test.mjs`
+
+### Source-only operation (native owner boundary)
+
+The GitHub provider observer's old PR-merge, issue-closing and branch-delete code
+has been removed, not merely hidden behind an `--apply` refusal. The original
+`SOURCE_CONTAINMENT_CLASSES` describes Git ancestry only; the legacy
+`DELETABLE_BRANCH_CLASSES` export is empty. Source-byte-equivalence still
+selects exact historical evidence and makes no history/consumer receiving
+claim. GitHub Engineering's original revision-leased operations remain the
+only admissible actuator once original Work and independent receiving qualify
+the concrete effect. `test/reconcile.test.mjs` enforces this source boundary
+in addition to the existing no-effect provider fixtures.
+
+### Original issues are observed without closing-keyword selection
+
+The same authenticated, bounded GitHub REST source reader now pages current
+open issues even when no merged PR says `Fixes #...`. Each resulting
+`github.issue-source-observation/v1` retains the provider's stable numeric
+repository/issue IDs, issue number, original `updated_at` source revision,
+actual open state, and *optional* exact merged-PR keyword relation. The
+existing CLI report's `originalIssueSources` is its ordinary JSON consumer;
+no separate JSON or issue register is written. Duplicate/missing identity,
+unversioned or contradictory provider state refuse rather than describing
+an empty source population. No keyword is independent beneficiary receipt,
+and `automaticIssueClosureAllowed` is always false.

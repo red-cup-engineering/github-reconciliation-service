@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { receiveEquivalentBranch } from "../src/receive-equivalent.mjs";
+import {receiveEquivalentBranch,assessEquivalentBranchSource} from "../src/receive-equivalent.mjs";
 
 function fixture({same=true,autoDelete=true,protectedRef=false,changedMain=false,
   mergeBlocked=false,extraPR=false}={}){
@@ -59,49 +59,46 @@ test("dry-run receives no historical commits and creates no PR",async()=>{
  const {client,calls,args}=fixture();
  const r=await receiveEquivalentBranch(client,{...args,apply:false});
  assert.equal(r.reason,"dry-run");
+ assert.equal(r.recordKind,"github.branch-source-equivalence-assessment/v1");
+ assert.equal(r.effectPermitted,false);
+ assert.equal(r.automaticRefRetirementAllowed,false);
+ assert.equal(receiveEquivalentBranch,assessEquivalentBranchSource);
  assert.equal(r.received,false);
  assert.equal(r.fileCount,1);
  assert.ok(calls.every(x=>x.method==="GET"));
 });
 
-test("equivalent unique history merges exactly once and confirms auto-delete",async()=>{
+test("source-equivalent historical commits never become a merge or branch deletion",async()=>{
  const {client,calls,args}=fixture();
- const r=await receiveEquivalentBranch(client,{...args,apply:true});
- assert.equal(r.received,true);
- assert.equal(r.deleted,true);
- assert.equal(r.prNumber,42);
- assert.equal(r.mergeSha,"merge1");
- assert.deepEqual(calls.filter(x=>x.method==="POST").map(x=>x.body.head),["codex/old"]);
- assert.equal(calls.filter(x=>x.method==="PUT").length,1);
- assert.equal(calls.filter(x=>x.method==="DELETE").length,0);
+ const value=await receiveEquivalentBranch(client,{...args,apply:true});
+ assert.equal(value.received,false);
+ assert.equal(value.deleted,false);
+ assert.equal(value.reason,"original-native-work-and-consumer-receiving-required");
+ assert.deepEqual(calls,[],"write request must refuse before any provider call");
 });
 
-test("when auto-delete is disabled, reverified containment permits safe retirement",async()=>{
+test("no automerge fallback exists even if GitHub auto-delete is disabled",async()=>{
  const {client,calls,args}=fixture({autoDelete:false});
- const r=await receiveEquivalentBranch(client,{...args,apply:true});
- assert.equal(r.received,true);
- assert.equal(r.deleted,true);
- assert.equal(calls.filter(x=>x.method==="DELETE").length,1);
+ const result=await receiveEquivalentBranch(client,{...args,apply:true});
+ assert.equal(result.deleted,false);
+ assert.equal(result.received,false);
+ assert.deepEqual(calls,[]);
 });
 
-test("non-equivalent files, changed main, protected branch or new PR refuse before any write",async()=>{
- for(const config of [
-   {same:false},{changedMain:true},{protectedRef:true},{extraPR:true},
- ]){
-   const {client,calls,args}=fixture(config);
-   const r=await receiveEquivalentBranch(client,{...args,apply:true});
-   assert.equal(r.received,false);
-   assert.equal(r.deleted,false);
-   assert.ok(calls.every(x=>["GET","LIST"].includes(x.method)));
+test("unqualified historical equivalence remains source-only without writes",async()=>{
+ for(const cfg of [{same:false},{changedMain:true},{protectedRef:true},{extraPR:true}]){
+  const {client,calls,args}=fixture(cfg);
+  const result=await receiveEquivalentBranch(client,{...args,apply:false});
+  assert.equal(result.received,false);
+  assert.equal(result.deleted,false);
+  assert.ok(calls.every(x=>["GET","LIST"].includes(x.method)));
  }
 });
 
-test("merge refusal closes the newly created PR rather than leaving one hung",async()=>{
+test("no PR is created for original source byte equivalence",async()=>{
  const {client,calls,args}=fixture({mergeBlocked:true});
- const r=await receiveEquivalentBranch(client,{...args,apply:true});
- assert.equal(r.received,false);
- assert.equal(r.deleted,false);
- assert.equal(r.prNumber,42);
- assert.ok(calls.some(x=>x.method==="PATCH" && x.body.state==="closed"));
- assert.ok(!calls.some(x=>x.method==="DELETE"));
+ const result=await receiveEquivalentBranch(client,{...args,apply:true});
+ assert.equal(result.received,false);
+ assert.equal(result.deleted,false);
+ assert.deepEqual(calls,[],"no PR ever created for source-only relation");
 });

@@ -8,12 +8,16 @@
  * Reads the token from $GITHUB_TOKEN, or from the systemd credential `github-token`
  * ($CREDENTIALS_DIRECTORY). Without --apply it only reports what it would do.
  */
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createClient } from "../src/github-client.mjs";
 import { listRepos, reconcileRepo, summarize } from "../src/reconcile.mjs";
 
 const argv = process.argv.slice(2);
+if(argv.includes("--apply"))
+  throw new TypeError("--apply refused: GitHub source observation alone cannot merge a PR, close Work or retire Git refs; use the original native receiving operations");
+if(argv.includes("--register"))
+  throw new TypeError("--register refused: write-only debt JSON has no qualified original reader; use the original machine-readable CLI result");
 const values = (flag) => argv.flatMap((arg,i) => {
   if(arg !== flag)return [];
   const value=argv[i+1];
@@ -48,18 +52,15 @@ for (const repo of repos) {
   try { results.push(await reconcileRepo(client, repo, options)); }
   catch (error) { console.error(`${repo}: ${error.message}`); results.push({ repo, actions: [], debts: [], error: error.message }); }
 }
-const register = one("--register");
-if (register) {
-  mkdirSync(register, { recursive: true });
-  for (const debt of results.flatMap((result) => result.debts)) writeFileSync(join(register, `${debt.id}.json`), JSON.stringify(debt, null, 2) + "\n");
-}
 const errors = results.filter((r) => r.error).map((r) => ({ repo: r.repo, error: r.error }));
-console.log(JSON.stringify({ applied: options.apply, ...summarize(results),
+console.log(JSON.stringify({ applied: false, ...summarize(results),
   repositoriesObserved: results.length - errors.length, repositoriesFailed: errors.length,
   errors, actions: results.flatMap((r) => r.actions),
   // These are first-class machine-readable source observations consumed from
   // the EXISTING CLI output, not files in another "archive" inventory.
   archiveRefSources: results.flatMap(r=>r.sourceObservations ?? []),
+  branchSourceCandidates: results.flatMap(r=>r.sourceCandidates ?? []),
+  originalIssueSources: results.flatMap(r=>r.originalIssueSources ?? []),
   archiveRefCoverage: errors.length ? "incomplete" : "complete-for-observed-repositories",
 }, null, 2));
 // A partially observed repository estate is not a successful reconciliation.
