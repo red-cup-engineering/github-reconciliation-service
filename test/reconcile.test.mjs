@@ -54,6 +54,7 @@ test("issueClosers needs a closing keyword and a number with #, in this reposito
 function fake(routes) {
   const writes = [];
   const merged = new Set();
+  const closedIssues = new Set();
   const MERGE_SHA = "a".repeat(40);
   const client = {
     async request(method, path, body) {
@@ -64,7 +65,15 @@ function fake(routes) {
           if (response?.merged === true) merged.add(Number(path.match(/\/pulls\/(\d+)\/merge$/u)[1]));
           return response;
         }
+        if (method==="PATCH" && /\/issues\/\d+$/u.test(path) && body?.state==="closed")
+          closedIssues.add(Number(path.match(/\/issues\/(\d+)$/u)[1]));
         return null;
+      }
+      if (path === "/repos/o/r/issues/40" && closedIssues.has(40)) {
+        if (routes["ISSUE READBACK /repos/o/r/issues/40"] === false)
+          throw new Error("post-close provider read is unavailable");
+        return routes["ISSUE READBACK /repos/o/r/issues/40"] ??
+          {number:40,state:"closed",state_reason:"completed"};
       }
       if (path === "/repos/o/r/pulls/5" && merged.has(5) &&
           routes["MERGED READBACK /repos/o/r/pulls/5"] !== false) {
@@ -86,14 +95,15 @@ function fake(routes) {
 
 const repo = "o/r";
 const world = () => ({
-  "GET /repos/o/r": { default_branch: "main" },
+  "GET /repos/o/r": { id: 12345, default_branch: "main" },
   "LIST /repos/o/r/branches": [
-    { name: "main", protected: false, commit: { sha: "m" } },
+    { name: "main", protected: false, commit: { sha: "a".repeat(40) } },
     { name: "done", protected: false, commit: { sha: "d" } },
     { name: "squashed", protected: false, commit: { sha: "s1" } },
     { name: "work", protected: false, commit: { sha: "w" } },
     { name: "pr-green", protected: false, commit: { sha: "g1" } },
   ],
+  "GET /repos/o/r/git/matching-refs/tags/archive/": [],
   "LIST /repos/o/r/pulls?state=open": [
     { number: 5, head: { ref: "pr-green", sha: "g1" } },
     { number: 6, head: { ref: "pr-red", sha: "r1" } },
@@ -145,7 +155,9 @@ test("apply merges the green pull request, deletes contained branches, closes th
   assert.ok(sent.includes("PATCH /repos/o/r/issues/40"));
   assert.ok(!sent.some((s) => s.includes("issues/41") || s.includes("issues/42") || s.includes("issues/43")));
   assert.deepEqual(result.debts.map((d) => d.id).sort(), ["github-o-r-branch-work-unique-commits", "github-o-r-pull-request-6-conflicting"]);
-  assert.deepEqual(summarize([result]), { repos: 1, branchesDeleted: 1, equivalentHistoryReceived:0, equivalentHistoryRetired:0, equivalentCandidates:0, branchesDeletable: 1, pullRequestsMerged: 1, pullRequestsMergeable: 1, issuesClosed: 1, issuesClosable: 1, debtRecords: 2 });
+  assert.deepEqual(summarize([result]), { repos: 1, branchesDeleted: 1, equivalentHistoryReceived:0, equivalentHistoryRetired:0, equivalentCandidates:0, branchesDeletable: 1, pullRequestsMerged: 1, pullRequestsMergeable: 1, issuesClosed: 1, issuesClosable: 1,
+    archiveTagSourcesObserved: 0, archiveTagSourcesAwaitingReceiving: 0,
+    branchesHeldByArchiveSource: 0, debtRecords: 2 });
 });
 
 test("issue closure is opt-in and unique squashed history is preserved", async () => {
@@ -321,6 +333,57 @@ test("unconfirmed merge response must not imply accepted Work or close its issue
     assert.ok(result.debts.some(d => d.id.includes("merge-receipt-unverified")));
     assert.equal(result.actions.find(a => a.kind === "merge-pull-request").applied, false);
   }
+});
+
+
+test("one unresolved archive tag is first-class original source and holds a contained branch",async()=>{
+ const routes=world();
+ const tip="d".repeat(40);
+ routes["LIST /repos/o/r/branches"][1].commit.sha=tip;
+ const original="refs/tags/archive/agent/one-unreceived-work";
+ routes["GET /repos/o/r/git/matching-refs/tags/archive/"]=[
+   {ref:original,object:{type:"commit",sha:tip}}
+ ];
+ routes["GET /repos/o/r/compare/"+"a".repeat(40)+"..."+tip]=
+   {ahead_by:0,behind_by:5,status:"behind"};
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{apply:true,closeIssues:true,now:NOW});
+ assert.equal(result.sourceObservations.length,1);
+ assert.equal(result.sourceObservations[0].refName,original);
+ assert.equal(result.sourceObservations[0].peeledCommitId,tip);
+ assert.equal(result.sourceObservations[0].originalIssueReceiving,"not-observed");
+ assert.equal(result.sourceObservations[0].automaticRefRetirementAllowed,false);
+ assert.ok(result.actions.some(a=>a.kind==="receive-archive-tag-source" &&
+   a.target===original && !a.applied));
+ assert.ok(result.actions.some(a=>a.kind==="delete-branch" && a.target==="done" &&
+   a.refRetirementAllowed===false && !a.applied));
+ assert.ok(!writes.some(w=>w.method==="DELETE"),"tag/branch kept even when --apply");
+ assert.ok(result.debts.some(d=>d.id.includes("archive-ref-source-not-received")));
+ assert.equal(summarize([result]).archiveTagSourcesAwaitingReceiving,1);
+ assert.equal(summarize([result]).branchesHeldByArchiveSource,1);
+});
+
+test("an attempted issue closure needs exact GitHub issue readback; unknown is not Work receipt",async()=>{
+ for(const failure of [false,{number:40,state:"open",state_reason:null},
+   {number:42,state:"closed",state_reason:"completed"}]){
+   const routes=world();
+   routes["ISSUE READBACK /repos/o/r/issues/40"]=failure;
+   const {client,writes}=fake(routes);
+   const result=await reconcileRepo(client,repo,{apply:true,closeIssues:true,now:NOW});
+   const action=result.actions.find(a=>a.kind==="close-issue" && a.target===40);
+   assert.equal(action.applied,false,"a PATCH without authentic exact issue state is not a success");
+   assert.equal(action.reason,"issue-closure-readback-unverified");
+   assert.ok(result.debts.some(d=>d.id.includes("issue-closure-readback-unverified")));
+   assert.ok(writes.some(w=>w.method==="PATCH" && w.path.endsWith("/issues/40")));
+   assert.equal(summarize([result]).issuesClosed,0);
+ }
+ const {client}=fake(world());
+ const good=await reconcileRepo(client,repo,{apply:true,closeIssues:true,now:NOW});
+ const action=good.actions.find(a=>a.kind==="close-issue" && a.target===40);
+ assert.equal(action.applied,true);
+ assert.equal(action.providerIssueState,"closed");
+ assert.equal(action.originalWorkReceived,false,
+   "GitHub issue closure is never independent original Work acceptance");
 });
 
 test("an open fork PR with an identical short head name does not pin local contained history", async () => {
