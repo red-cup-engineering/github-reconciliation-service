@@ -79,7 +79,7 @@ export async function reconcileRepo(client, repo, options = {}) {
   }
 
   // Qualify current pull source; no merge can occur in a source observation.
-  let qualifiedPullSources = 0;
+
   for (const summary of openPulls) {
     const pull = await client.request("GET", `/repos/${repo}/pulls/${summary.number}`);
     const files = (await client.paginate(`/repos/${repo}/pulls/${pull.number}/files`)).map((file) => file.filename);
@@ -104,8 +104,9 @@ export async function reconcileRepo(client, repo, options = {}) {
     const provisional = pullClass({ pull, checks, files, changedOnBase, defaultBranch });
     const cls=!comparisonComplete&&provisional==="green-and-mergeable"
       ?"base-difference-incomplete":provisional;
-    if (cls === "green-and-mergeable" && qualifiedPullSources < maxMerges) {
-      qualifiedPullSources += 1;
+    // The observer has no merge actuator. A historical mutation limit must
+    // never hide genuine PR source candidates from Work receiving.
+    if (cls === "green-and-mergeable") {
       const action = { kind: "receive-pull-source", repo, target: pull.number, class: cls,
         recordKind:"github.pull-source-review-candidate/v1",sourceHeadCommitId:pull.head.sha,
         sourceBaseCommitId:pull.base.sha, applied:false,title:pull.title,
