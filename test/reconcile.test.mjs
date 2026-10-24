@@ -200,7 +200,7 @@ test("historical apply cannot merge, close or delete; refused before original pr
  assert.equal(summarize([read]).branchesDeleted,0);
  assert.equal(summarize([read]).pullRequestsMerged,0);
  assert.equal(summarize([read]).issuesClosed,0);
- assert.equal(summarize([read]).branchSourceCandidates,4);
+ assert.equal(summarize([read]).branchSourceCandidateCount,4);
  assert.equal(summarize([read]).issueOutcomeCandidates,1);
 });
 
