@@ -37,6 +37,10 @@ function rows(report, field, kind, predicate) {
 }
 
 export function admitGitHubReconciliationSource(report,{repository}={}) {
+  // A source contract must not silently re-admit the retired, unread
+  // system-debt JSON family or the count that previously masqueraded as Work.
+  if (report && (Object.hasOwn(report,"debtRecords") || Object.hasOwn(report,"debts")))
+    throw new TypeError("retired system-debt JSON is not a GitHub source record");
   if (!REPO.test(repository ?? "") ||
       !report || report.applied !== false ||
       report.repositoriesObserved !== 1 || report.repositoriesFailed !== 0 ||
