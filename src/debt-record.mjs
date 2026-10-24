@@ -1,7 +1,7 @@
 const OWNING_SECTION = "computer-engineering-services-section";
 
 const REPAIR = {
-  "unique-commits": "Open a pull request for the commits or record them in the owning section; the branch holds work the default branch lacks.",
+  "unique-commits": "Trace original branch requirements and tests through the actual living source owner and ordinary consumer; Git containment/age alone cannot retire Work.",
   conflicting: "Merge the default branch into the pull request head, resolve the conflicts, and push.",
   "checks-failing": "Read the failing check run, fix the cause in the pull request, and push.",
   "checks-pending": "Wait for the checks on the head commit; a check that never starts is a runner fault to record.",

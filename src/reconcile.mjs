@@ -30,6 +30,7 @@ export async function reconcileRepo(client, repo, options = {}) {
   if (apply) throw new TypeError("Original Work/consumer receiving required: use the native revision-bound GitHub Engineering integrator, not this source observer");
   const actions = [];
   const debts = [];
+  const sourceCandidates = [];
   const note = (kind, target, extra = {}) => actions.push({ kind, repo, target, applied: false, ...extra });
   const old = (iso) => Date.parse(now) - Date.parse(iso) >= minAgeDays * DAY;
 
@@ -65,7 +66,11 @@ export async function reconcileRepo(client, repo, options = {}) {
     const cls = pullClass({ pull, checks, files, changedOnBase, defaultBranch });
     if (cls === "green-and-mergeable" && merges < maxMerges) {
       merges += 1;
-      const action = { kind: "merge-pull-request", repo, target: pull.number, class: cls, applied: false, title: pull.title };
+      const action = { kind: "receive-pull-source", repo, target: pull.number, class: cls,
+        recordKind:"github.pull-source-review-candidate/v1",sourceHeadCommitId:pull.head.sha,
+        sourceBaseCommitId:pull.base.sha, applied:false,title:pull.title,
+        originalWorkReceiving:"not-observed",ordinaryConsumerReceiving:"not-observed",
+        mergeAuthority:"not-granted-by-observer" };
       if (apply && mergeGreenPulls) {
         // Authorization is explicit; an attempted merge is not a completed
         // merge. Read back the exact provider outcome before concluding the
@@ -133,8 +138,33 @@ export async function reconcileRepo(client, repo, options = {}) {
     if (branch.name === defaultBranch) continue;
     const compare = await client.request("GET", `/repos/${repo}/compare/${path(defaultBranch)}...${path(branch.name)}`).catch(() => null);
     const cls = branchClass({ branch, defaultBranch, ahead_by: compare?.ahead_by ?? null, openPullHeads, isProtected: branch.protected });
+    const aheadCommitCount=Number.isSafeInteger(compare?.ahead_by)&&compare.ahead_by>=0?compare.ahead_by:null;
+    const behindCommitCount=Number.isSafeInteger(compare?.behind_by)&&compare.behind_by>=0?compare.behind_by:null;
+    const mergeBaseCommitId=/^[a-f0-9]{40}$/u.test(compare?.merge_base_commit?.sha??"")
+      ?compare.merge_base_commit.sha:null;
+    const sourceLineageRelation=aheadCommitCount===null||behindCommitCount===null||mergeBaseCommitId===null
+      ?"not-observed":aheadCommitCount>0&&behindCommitCount>0?"diverged"
+      :aheadCommitCount>0?"branch-ahead":behindCommitCount>0?"branch-behind":"identical";
+    if(["contained-in-default","unique-commits"].includes(cls))
+      sourceCandidates.push(Object.freeze({
+        recordKind:"github.branch-source-reconciliation-candidate/v1",
+        repositoryId:info.id,repositoryFullName:repo,refName:"refs/heads/"+branch.name,
+        headCommitId:branch.commit?.sha??null,
+        defaultBranchName:defaultBranch,observedDefaultCommitId:originalDefaultHead,
+        technicalClassification:cls,aheadCommitCount,behindCommitCount,
+        mergeBaseCommitId,sourceLineageRelation,
+        matchingArchiveRefNames:Object.freeze(sourceObservations.filter(x=>
+          x.peeledCommitId!==null&&x.peeledCommitId===branch.commit?.sha)
+          .map(x=>x.refName).sort()),
+        originalWorkReceiving:"not-observed",ordinaryConsumerReceiving:"not-observed",
+        automaticRefRetirementAllowed:false,
+        firstReceivingAction:"reconcile-source-requirements-issues-and-ordinary-consumer-at-native-github-owner"
+      }));
     if (DELETABLE_BRANCH_CLASSES.has(cls)) {
-      const action = { kind: "delete-branch", repo, target: branch.name, class: cls, applied: false };
+      const action = { kind: "receive-contained-branch-source", repo, target: branch.name,
+        recordKind:"github.branch-source-reconciliation-candidate/v1",
+        class:cls,applied:false,refRetirementAllowed:false,
+        originalWorkReceiving:"not-observed" };
       // A retained archive-named tag referencing the same commit is evidence
       // of a still-open original source and issue/consumer custody question.
       // Even a contained commit is NOT consent to retire the branch's name.
@@ -192,7 +222,7 @@ export async function reconcileRepo(client, repo, options = {}) {
         if (receipt.fileCount>0) {
           equivalentReceipts++;
           actions.push({
-            kind:"receive-equivalent-branch",repo,target:branch.name,
+            kind:"assess-equivalent-branch-source",repo,target:branch.name,
             class:"content-equivalent",applied:receipt.received,
             deleted:receipt.deleted,prNumber:receipt.prNumber??null,
             verifiedFiles:receipt.fileCount,reason:receipt.reason,
@@ -213,11 +243,15 @@ export async function reconcileRepo(client, repo, options = {}) {
   }
 
   const closers = issueClosers(mergedPulls, repo);
-  if (closeIssues && closers.size) {
+  if (closers.size) {
     for (const issue of await client.paginate(`/repos/${repo}/issues?state=open`)) {
       const pull = closers.get(issue.number);
       if (!pull || issue.pull_request) continue;
-      const action = { kind: "close-issue", repo, target: issue.number, class: "fixed-by-merged-pull-request", applied: false, by: pull.html_url };
+      const action = { kind: "receive-issue-outcome", repo, target: issue.number,
+        recordKind:"github.issue-outcome-receiving-candidate/v1",
+        class:"named-by-merged-pull-request",applied:false,by:pull.html_url,
+        originalWorkReceiving:"not-observed",independentBeneficiaryReceiving:"not-observed",
+        automaticClosureAllowed:false };
       if (apply) {
         // A completed HTTP request is not a provider-observed issue state.
         // Retain an unconfirmed closure as debt; never repeat a write blindly.
@@ -243,26 +277,26 @@ export async function reconcileRepo(client, repo, options = {}) {
       actions.push(action);
     }
   }
-  return { repo, actions, debts, sourceObservations };
+  return { repo, actions, debts, sourceObservations,
+    sourceCandidates:Object.freeze(sourceCandidates),
+    originalWorkReceiving:"not-observed",effectAuthority:"none; native Work receiving required" };
 }
 
 export function summarize(results) {
   const count = (kind) => results.flatMap((result) => result.actions).filter((action) => action.kind === kind);
   return {
     repos: results.length,
-    branchesDeleted: count("delete-branch").filter((action) => action.applied).length+
-      count("receive-equivalent-branch").filter((action)=>action.deleted).length,
-    equivalentHistoryReceived:count("receive-equivalent-branch").filter((action)=>action.applied).length,
-    equivalentHistoryRetired:count("receive-equivalent-branch").filter((action)=>action.deleted).length,
-    equivalentCandidates:count("receive-equivalent-branch").length,
-    branchesDeletable: count("delete-branch").length,
-    pullRequestsMerged: count("merge-pull-request").filter((action) => action.applied).length,
-    pullRequestsMergeable: count("merge-pull-request").length,
-    issuesClosed: count("close-issue").filter((action) => action.applied).length,
-    issuesClosable: count("close-issue").length,
+    branchesDeleted:0, equivalentHistoryReceived:0,equivalentHistoryRetired:0,
+    equivalentCandidates:count("assess-equivalent-branch-source").length,
+    branchesDeletable:0,
+    branchSourceCandidates:results.reduce((n,r)=>n+(r.sourceCandidates?.length??0),0),
+    pullRequestsMerged:0,pullRequestsMergeable:count("receive-pull-source").length,
+    issuesClosed:0,issuesClosable:0,
+    issueOutcomeCandidates:count("receive-issue-outcome").length,
     archiveTagSourcesObserved: results.reduce((total,result)=>total+(result.sourceObservations?.length ?? 0),0),
     archiveTagSourcesAwaitingReceiving: results.reduce((total,result)=>total+(result.sourceObservations?.filter(x=>x.independentReceivingRequired).length ?? 0),0),
-    branchesHeldByArchiveSource: count("delete-branch").filter(x=>x.refRetirementAllowed===false).length,
+    branchesHeldByArchiveSource:results.reduce((n,r)=>n+(r.sourceCandidates?.filter(
+      x=>x.matchingArchiveRefNames.length).length??0),0),
     debtRecords: results.reduce((total, result) => total + result.debts.length, 0),
   };
 }

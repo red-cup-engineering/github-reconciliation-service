@@ -56,12 +56,13 @@ if (register) {
   for (const debt of results.flatMap((result) => result.debts)) writeFileSync(join(register, `${debt.id}.json`), JSON.stringify(debt, null, 2) + "\n");
 }
 const errors = results.filter((r) => r.error).map((r) => ({ repo: r.repo, error: r.error }));
-console.log(JSON.stringify({ applied: options.apply, ...summarize(results),
+console.log(JSON.stringify({ applied: false, ...summarize(results),
   repositoriesObserved: results.length - errors.length, repositoriesFailed: errors.length,
   errors, actions: results.flatMap((r) => r.actions),
   // These are first-class machine-readable source observations consumed from
   // the EXISTING CLI output, not files in another "archive" inventory.
   archiveRefSources: results.flatMap(r=>r.sourceObservations ?? []),
+  branchSourceCandidates: results.flatMap(r=>r.sourceCandidates ?? []),
   archiveRefCoverage: errors.length ? "incomplete" : "complete-for-observed-repositories",
 }, null, 2));
 // A partially observed repository estate is not a successful reconciliation.
