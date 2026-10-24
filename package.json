@@ -11,7 +11,8 @@
     "./classify": "./src/classify.mjs",
     "./client": "./src/github-client.mjs",
     "./equivalent-branch": "./src/equivalent-branch.mjs",
-    "./receive-equivalent": "./src/receive-equivalent.mjs"
+    "./receive-equivalent": "./src/receive-equivalent.mjs",
+    "./archive-ref-observation": "./src/archive-ref-observation.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
