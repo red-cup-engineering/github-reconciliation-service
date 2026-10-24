@@ -56,7 +56,12 @@ if (register) {
 const errors = results.filter((r) => r.error).map((r) => ({ repo: r.repo, error: r.error }));
 console.log(JSON.stringify({ applied: options.apply, ...summarize(results),
   repositoriesObserved: results.length - errors.length, repositoriesFailed: errors.length,
-  errors, actions: results.flatMap((r) => r.actions) }, null, 2));
+  errors, actions: results.flatMap((r) => r.actions),
+  // These are first-class machine-readable source observations consumed from
+  // the EXISTING CLI output, not files in another "archive" inventory.
+  archiveRefSources: results.flatMap(r=>r.sourceObservations ?? []),
+  archiveRefCoverage: errors.length ? "incomplete" : "complete-for-observed-repositories",
+}, null, 2));
 // A partially observed repository estate is not a successful reconciliation.
 // Keep the machine-readable receipt on stdout, but fail the invoking job.
 if (errors.length) process.exitCode = 1;
