@@ -131,6 +131,34 @@ Engineering Actions consumer must admit these arrays and show the receiving
 frontier before treating a shorter heuristic as authoritative. No second JSON
 registry or branch cleaning task is created.
 
+## Archived repository source and coherent read cuts
+
+Organization-wide discovery no longer filters out GitHub repositories with
+`archived:true` or `disabled:true`. Those flags are provider source state,
+not evidence that an original branch/tag/issue/PR or its ordinary consumer was
+received. This observer still has **no** GitHub write path. If such a
+repository cannot be read with the configured credential, its exact scope is
+reported as a repository error and the CLI exits nonzero; it does **not**
+quietly shrink its discovered population and present a false zero.
+
+The original `reconcileRepo` now obtains a SECOND paginated observation of
+the repository's branch heads/protection, open PR head/source identities and
+open issue revisions and verifies the exact repository ID/default branch.
+The projection must agree with the initial source cut before any whole-repo
+report is released. The existing CLI's `sourceCutCoverage` is
+`matching-open-github-source-cuts` only after that positive read, and
+`incomplete` if a repository read fails. A renamed branch, moved Git OID,
+new PR, changed PR fork identity, closed/opened issue or issue revision
+movement is a refusal, not an inferred integration or empty backlog.
+
+GitHub does not supply an atomic snapshot across these REST endpoints:
+matching initial/final inventories rule out observed **net changes**, not
+undetected move-away-and-back ABA transitions. Source observations remain
+read-only evidence requiring original Work, Engineering, Coesite and ordinary
+consumer receiving before integration or any authorized ref retirement.
+The original source/consumer contract uses qualified Git refs, immutable Git
+commit OIDs and existing typed records; no shadow registry or JSON store.
+
 ## Open pull request source is not a green-merge shortlist
 
 Every open GitHub pull request now has exactly one
