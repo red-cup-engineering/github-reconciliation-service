@@ -106,6 +106,31 @@ explicit `archiveRefCoverage` result. For each source tag, one existing
 a real upstream datum for original Git Engineering/Coesite issue and branch
 reconciliation, not a new issue, actor, office or source-acceptance event.
 
+## Branch-to-PR evidence is a Git relation, not a short-name guess
+
+The original branch source reader previously treated an open PR's unqualified
+`head.ref` short name as a locally held branch, even when GitHub did not
+observe its originating repository. Two different forks may use the same
+branch name; neither a matching name nor PR status receives Work.
+
+The existing `github.pull-source-observation/v1` now preserves
+`sourceHeadRepositoryId` (GitHub's stable numeric repository identity, or
+explicit `null` when unobserved). A branch's original
+`github.branch-source-reconciliation-candidate/v1` now carries
+`matchingOpenPullRequestNumbers[]` only when that stable repository ID,
+full `refs/heads/...` and exact immutable Git head OID agree. Named
+same-ref PRs with unknown origin or differing commit instead appear in
+`unresolvedOpenPullRequestNumbers[]`. Known foreign forks are never
+classified as original local PRs merely because the names match. A protected
+branch retains its exact PR evidence without permitting effects.
+
+These relations are provider source coordinates, not independently accepted
+requirements or a GitHub merge invitation. Both the original PR and branch
+remain available for work/consumer receiving. The current original Computer
+Engineering Actions consumer must admit these arrays and show the receiving
+frontier before treating a shorter heuristic as authoritative. No second JSON
+registry or branch cleaning task is created.
+
 ## Open pull request source is not a green-merge shortlist
 
 Every open GitHub pull request now has exactly one
