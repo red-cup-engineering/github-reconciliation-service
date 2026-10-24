@@ -49,12 +49,17 @@ export async function observeArchiveRefSources(client,{repository,repositoryId,o
     throw new RangeError("GitHub archive reference inventory incomplete or unbounded");
   const names = new Set();
   const sorted = [...refs].sort((a,b)=>String(a?.ref).localeCompare(String(b?.ref)));
-  const observations = [];
-  for(const ref of sorted){
-    const refName = nameOf(ref);
+  // Validate the ENTIRE bounded provider page before additional network reads.
+  // Otherwise one bad later ref could make us spend an RPC on a partial census.
+  const admitted = sorted.map(ref=>{
+    const refName=nameOf(ref);
     if(names.has(refName) || !exact(ref.object?.type,ref.object?.sha))
       throw new TypeError("duplicate or malformed GitHub archive ref observation");
     names.add(refName);
+    return {ref,refName};
+  });
+  const observations = [];
+  for(const {ref,refName} of admitted){
     const gitObjectId = ref.object.sha;
     const gitObjectKind = ref.object.type;
     let cursor = ref.object,peeledCommitId = null;
