@@ -47,6 +47,7 @@ globalThis.fetch = async (url, init) => {
     assert.equal(success.repositoriesFailed, 0);
     assert.deepEqual(success.errors, []);
     assert.equal(success.archiveRefCoverage,"complete-for-observed-repositories");
+    assert.equal(success.sourceCutCoverage,"matching-open-github-source-cuts");
     assert.deepEqual(success.archiveRefSources,[]);
     assert.deepEqual(success.originalIssueSources,[]);
     assert.deepEqual(success.pullSourceCandidates,[]);
@@ -66,6 +67,8 @@ globalThis.fetch = async (url, init) => {
     assert.equal(report.errors.length, 1);
     assert.equal(report.errors[0].repo, "x/y");
     assert.equal(report.applied, false);
+    assert.equal(report.sourceCutCoverage,"incomplete",
+      "an unreadable repository prevents a coherent source cut");
     assert.equal(report.archiveRefCoverage,"incomplete",
       "an unreadable repository must not imply a complete archive-tag census");
     assert.deepEqual(report.actions, []);
