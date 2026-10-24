@@ -40,6 +40,7 @@ export function pullClass({ pull, checks, files, changedOnBase, defaultBranch })
   if (pull.mergeable === null || pull.mergeable === undefined) return "mergeability-unknown";
   if (files.length > 0 && files.every((file) => changedOnBase.has(file))) return "superseded-by-changes-on-default";
   if (pull.mergeable === false || pull.mergeable_state === "dirty") return "conflicting";
+  if (checks === "unavailable") return "checks-unavailable";
   if (checks === "failing") return "checks-failing";
   if (checks === "pending") return "checks-pending";
   if (checks === "none") return "no-checks";
