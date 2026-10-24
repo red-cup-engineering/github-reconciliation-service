@@ -111,27 +111,27 @@ const world = () => ({
     { name: "done", protected: false, commit: { sha: "d" } },
     { name: "squashed", protected: false, commit: { sha: "s1" } },
     { name: "work", protected: false, commit: { sha: "w" } },
-    { name: "pr-green", protected: false, commit: { sha: "g1" } },
+    { name: "pr-green", protected: false, commit: { sha: "1111111111111111111111111111111111111111" } },
   ],
   "GET /repos/o/r/git/matching-refs/tags/archive/": [],
   "GET /repos/o/r/git/ref/heads/main": {ref:"refs/heads/main",object:{type:"commit",sha:"a".repeat(40)}},
   "LIST /repos/o/r/pulls?state=open": [
-    { number: 5, head: { ref: "pr-green", sha: "g1" } },
-    { number: 6, head: { ref: "pr-red", sha: "r1" } },
+    { id:5005, number: 5, head: { ref: "pr-green", sha: "1111111111111111111111111111111111111111" } },
+    { id:5006, number: 6, head: { ref: "pr-red", sha: "2222222222222222222222222222222222222222" } },
   ],
   "LIST /repos/o/r/pulls?state=closed&sort=updated&direction=desc": [
     { number: 3, merged_at: OLD, head: { sha: "s1" }, title: "Carry the thing", body: "Fixes #40", html_url: "u3" },
     { number: 4, merged_at: null, head: { sha: "x" }, title: "closed unmerged", body: "fixes #41" },
   ],
-  "GET /repos/o/r/pulls/5": { number: 5, title: "green", base: { ref: "main", sha: "b" }, head: { ref: "pr-green", sha: "g1" }, draft: false, mergeable: true, mergeable_state: "clean", updated_at: OLD, html_url: "u5" },
-  "GET /repos/o/r/pulls/6": { number: 6, title: "red", base: { ref: "main", sha: "b" }, head: { ref: "pr-red", sha: "r1" }, draft: false, mergeable: false, mergeable_state: "dirty", updated_at: OLD, html_url: "u6" },
+  "GET /repos/o/r/pulls/5": { id:5005, number: 5, state:"open", title: "green", base: { ref: "main", sha: "3333333333333333333333333333333333333333" }, head: { ref: "pr-green", sha: "1111111111111111111111111111111111111111" }, draft: false, mergeable: true, mergeable_state: "clean", updated_at: OLD, html_url: "u5" },
+  "GET /repos/o/r/pulls/6": { id:5006, number: 6, state:"open", title: "red", base: { ref: "main", sha: "3333333333333333333333333333333333333333" }, head: { ref: "pr-red", sha: "2222222222222222222222222222222222222222" }, draft: false, mergeable: false, mergeable_state: "dirty", updated_at: OLD, html_url: "u6" },
   "LIST /repos/o/r/pulls/5/files": [{ filename: "a.txt" }],
   "LIST /repos/o/r/pulls/6/files": [{ filename: "b.txt" }],
-  "GET /repos/o/r/compare/b...main": { files: [{ filename: "z.txt" }] },
-  "LIST /repos/o/r/commits/g1/check-runs": [{ status: "completed", conclusion: "success" }],
-  "LIST /repos/o/r/commits/r1/check-runs": [],
-  "GET /repos/o/r/commits/g1/status": { total_count: 0, state: "pending" },
-  "GET /repos/o/r/commits/r1/status": { total_count: 0, state: "pending" },
+  "GET /repos/o/r/compare/3333333333333333333333333333333333333333...main": { files: [{ filename: "z.txt" }] },
+  "LIST /repos/o/r/commits/1111111111111111111111111111111111111111/check-runs": [{ status: "completed", conclusion: "success" }],
+  "LIST /repos/o/r/commits/2222222222222222222222222222222222222222/check-runs": [],
+  "GET /repos/o/r/commits/1111111111111111111111111111111111111111/status": { total_count: 0, state: "pending" },
+  "GET /repos/o/r/commits/2222222222222222222222222222222222222222/status": { total_count: 0, state: "pending" },
   "GET /repos/o/r/compare/main...done": { ahead_by: 0 },
   "GET /repos/o/r/git/ref/heads/done": { object: { sha: "d" } },
   "GET /repos/o/r/branches/done": { commit: { sha: "d" }, protected: false },
@@ -158,6 +158,17 @@ test("original source read reports branch, issue and PR receiving candidates wit
   "receive-pull-source:5:false"
  ]);
  assert.equal(result.effectAuthority,"none; native Work receiving required");
+ assert.equal(result.pullSourceCandidates.length,2,"both green and conflicted PRs remain source");
+ assert.deepEqual(result.pullSourceCandidates.map(p=>p.technicalClassification),
+   ["green-and-mergeable","conflicting"]);
+ assert.ok(result.pullSourceCandidates.every(p=>
+   p.recordKind==="github.pull-source-observation/v1" &&
+   p.repositoryId===12345 && p.pullRequestState==="open" &&
+   p.automaticPullMergeAllowed===false && p.originalWorkReceiving==="not-observed" &&
+   p.ordinaryConsumerReceiving==="not-observed"));
+ assert.equal(result.pullSourceCandidates[0].sourceHeadCommitId,"1111111111111111111111111111111111111111");
+ assert.equal(result.pullSourceCandidates[1].sourceBaseCommitId,"3333333333333333333333333333333333333333");
+ assert.equal(summarize([result]).originalPullsObserved,2);
  assert.equal(result.sourceCandidates.length,4);
  assert.ok(result.sourceCandidates.every(c=>
   c.recordKind==="github.branch-source-reconciliation-candidate/v1"
@@ -300,6 +311,8 @@ test("legacy merge flags without Work admission remain source-only",async()=>{
  assert.equal(summarize([result]).pullRequestsMerged,0);
  assert.equal(summarize([result]).pullRequestsMergeable,1,
    "historical zero merge limit must not censor source-only PR reviews");
+ assert.equal(summarize([result]).originalPullsObserved,2,
+   "read-only PR inventory is independent of historical merge count caps");
  assert.ok(result.actions.some(a=>a.kind==="receive-issue-outcome"));
 });
 
@@ -375,8 +388,8 @@ test("truncated, inconsistent and unknown GitHub check collections fail closed",
 
 test("unavailable GitHub check-runs cannot be masked by passing commit statuses", async () => {
   const routes = world();
-  delete routes["LIST /repos/o/r/commits/g1/check-runs"];
-  routes["GET /repos/o/r/commits/g1/status"] = { total_count: 1, state: "success" };
+  delete routes["LIST /repos/o/r/commits/1111111111111111111111111111111111111111/check-runs"];
+  routes["GET /repos/o/r/commits/1111111111111111111111111111111111111111/status"] = { total_count: 1, state: "success" };
   const { client, writes } = fake(routes);
   const result = await reconcileRepo(client, repo, {
     mergeGreenPulls: true, now: NOW,
@@ -436,7 +449,7 @@ test("merged PR's closing keyword is not a supported issue closure or approval",
 test("foreign fork naming a local branch does not grant ref retirement",async()=>{
  const routes=world();
  routes["LIST /repos/o/r/pulls?state=open"][1].head={
-  ref:"done",repo:{full_name:"someone-else/r"},sha:"r1"};
+  ref:"done",repo:{full_name:"someone-else/r"},sha:"2222222222222222222222222222222222222222"};
  const {client,writes}=fake(routes);
  const result=await reconcileRepo(client,repo,{now:NOW});
  assert.deepEqual(writes,[]);
@@ -493,7 +506,7 @@ test("duplicate or unversioned original issue source must refuse, never invent a
 
 test("skipped-only original check runs never produce an accepted PR source candidate",async()=>{
  const routes=world();
- routes["LIST /repos/o/r/commits/g1/check-runs"]=[{status:"completed",conclusion:"skipped"}];
+ routes["LIST /repos/o/r/commits/1111111111111111111111111111111111111111/check-runs"]=[{status:"completed",conclusion:"skipped"}];
  const {client,writes}=fake(routes);
  const result=await reconcileRepo(client,repo,{now:NOW});
  assert.deepEqual(writes,[]);
@@ -502,7 +515,7 @@ test("skipped-only original check runs never produce an accepted PR source candi
 });
 test("GitHub base comparison at 300 files remains incomplete rather than a green review",async()=>{
  const routes=world();
- routes["GET /repos/o/r/compare/b...main"]={
+ routes["GET /repos/o/r/compare/3333333333333333333333333333333333333333...main"]={
   files:Array.from({length:300},(_,n)=>({filename:"path-"+n+".mjs"}))
  };
  const {client,writes}=fake(routes);
@@ -510,4 +523,39 @@ test("GitHub base comparison at 300 files remains incomplete rather than a green
  assert.deepEqual(writes,[]);
  assert.equal(result.actions.some(a=>a.kind==="receive-pull-source"&&a.target===5),false);
  assert.ok(result.debts.some(row=>row.id.includes("base-difference-incomplete")));
+});
+
+test("draft, nondefault-target and unread CI PRs remain typed original source",async()=>{
+  for (const [change,expectedClass] of [
+    [routes=>{routes["GET /repos/o/r/pulls/5"].draft=true;},"draft"],
+    [routes=>{routes["GET /repos/o/r/pulls/5"].base.ref="development";},"not-against-default"],
+    [routes=>{delete routes["LIST /repos/o/r/commits/1111111111111111111111111111111111111111/check-runs"];},"checks-unavailable"],
+  ]){
+    const routes=world();change(routes);
+    const {client,writes}=fake(routes);
+    const read=await reconcileRepo(client,repo,{now:NOW,maxMerges:0});
+    assert.equal(read.pullSourceCandidates.length,2);
+    const row=read.pullSourceCandidates.find(p=>p.pullRequestNumber===5);
+    assert.equal(row.technicalClassification,expectedClass);
+    assert.equal(row.originalWorkReceiving,"not-observed");
+    assert.equal(row.automaticPullMergeAllowed,false);
+    assert.deepEqual(writes,[]);
+  }
+});
+
+test("duplicate, missing or changing original pull identities and SHA witnesses refuse",async()=>{
+  for (const mutate of [
+    r=>{delete r["GET /repos/o/r/pulls/5"].id;},
+    r=>{r["GET /repos/o/r/pulls/5"].head.sha="not-a-git-oid";},
+    r=>{r["GET /repos/o/r/pulls/5"].state="closed";},
+    r=>{r["GET /repos/o/r/pulls/5"].updated_at="not-a-date";},
+    r=>{r["LIST /repos/o/r/pulls?state=open"][0].head.sha="f".repeat(40);},
+    r=>{r["LIST /repos/o/r/pulls?state=open"].push({...r["LIST /repos/o/r/pulls?state=open"][0]});},
+  ]){
+    const routes=world();mutate(routes);
+    const {client,writes}=fake(routes);
+    await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
+      /pull request identity, revision or source coverage is incomplete/u);
+    assert.deepEqual(writes,[]);
+  }
 });

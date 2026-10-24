@@ -49,6 +49,8 @@ globalThis.fetch = async (url, init) => {
     assert.equal(success.archiveRefCoverage,"complete-for-observed-repositories");
     assert.deepEqual(success.archiveRefSources,[]);
     assert.deepEqual(success.originalIssueSources,[]);
+    assert.deepEqual(success.pullSourceCandidates,[]);
+    assert.equal(success.originalPullsObserved,0);
     assert.equal(success.originalIssuesObserved,0);
     assert.equal(success.archiveTagSourcesObserved,0);
 

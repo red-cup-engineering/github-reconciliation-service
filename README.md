@@ -99,6 +99,38 @@ explicit `archiveRefCoverage` result. For each source tag, one existing
 a real upstream datum for original Git Engineering/Coesite issue and branch
 reconciliation, not a new issue, actor, office or source-acceptance event.
 
+## Open pull request source is not a green-merge shortlist
+
+Every open GitHub pull request now has exactly one
+`github.pull-source-observation/v1` in the EXISTING CLI JSON
+`pullSourceCandidates` (and the non-authorizing `originalPullsObserved`
+count). That includes draft, conflict, nondefault-target, pending,
+skipped/inconclusive, unavailable-CI and qualified-green proposals.
+`pullRequestsMergeable` continues to count only its historical green
+technical subset and never represents the original Work inventory.
+A historical `--max-merges 0` limit does not censor source observations.
+
+The fields distinguish `pullRequestId` (GitHub numeric identity),
+`pullRequestNumber` (repository-scoped issue/PR number),
+`sourceHeadCommitId`/`sourceBaseCommitId` (immutable Git OIDs),
+`sourceHeadRepositoryFullName` (nullable for unknown/deleted forks),
+`sourceHeadRefName`/`sourceBaseRefName` (standard Git ref names),
+`pullRequestUpdatedAt` (observed provider revision),
+`technicalClassification`, `checkEvidenceState` and
+`baseDifferenceCoverage`. Missing, malformed, duplicate or changing
+identity refuses rather than silently hiding a PR. No observation grants
+merge, review, closure, deletion, original Work acceptance or beneficiary
+receiving. GitHub pull source evidence remains a projection of the
+original Work, not a new backlog or JSON file.
+
+The previous `system-debt` objects in `src/debt-record.mjs` were
+historically counted but **not delivered** through CLI stdout; their
+`id`, `after`, `breaks-requirements` and free-text `repair` were not
+a typed Work decision. The first actually selected downstream consumer
+must read the source arrays, not infer an actionable debt register from
+the legacy count. Retire the compatibility aggregate only after that
+consumer is qualified; this change does not create another JSON store.
+
 **Issue processing:** with the already separate explicit `--close-issues`
 grant, the original GitHub API must now independently read back the actual
 closed issue `number`, `state`, and `state_reason` after a closure attempt
