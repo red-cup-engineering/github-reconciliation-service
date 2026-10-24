@@ -9,7 +9,8 @@ const UNRELATED = "d".repeat(40);
 const input = {
   repository: "561-group/561-group-services-section",
   repositoryId: 1424041234,
-  observedBaseCommitId: ROOT
+  observedBaseCommitId: ROOT,
+  observedBaseRefName: "refs/heads/main"
 };
 const ref = (name,type,sha) => ({ref:"refs/tags/archive/"+name,object:{type,sha}});
 const path="/repos/561-group/561-group-services-section";
@@ -19,8 +20,10 @@ function provider(routes) {
   const client={async request(method,url){
     calls.push([method,url]);
     assert.equal(method,"GET","no writes permitted, even with misnamed archive tags");
+    if(!Object.hasOwn(routes,url) && url===path+"/git/ref/heads/main")
+      return {ref:"refs/heads/main",object:{type:"commit",sha:ROOT}};
     if(!Object.hasOwn(routes,url))throw new Error("unobserved source "+url);
-    return structuredClone(routes[url]);
+    return structuredClone(typeof routes[url] === "function" ? routes[url]() : routes[url]);
   }};
   return {client,calls};
 }
@@ -62,7 +65,7 @@ test("real GitHub lightweight and annotated archive refs retain both native obje
     assert.ok(Object.isFrozen(observed));
   }
   assert.ok(Object.isFrozen(result));
-  assert.equal(calls.length,4);
+  assert.equal(calls.length,6,"two archive inventories plus one default ref readback");
   assert.ok(!JSON.stringify(result).includes("AI agent says ARCHIVED"),
     "opaque tag messages are not acceptance/Work evidence");
 });
@@ -80,7 +83,7 @@ test("nested or noncommit tags remain source evidence, never counterfeit a peele
   assert.equal(out[0].peeledCommitId,null);
   assert.equal(out[0].technicalRelation,"noncommit-or-unpeeled-ref");
   assert.equal(out[0].aheadCommitCount,null);
-  assert.equal(calls.length,3,"a noncommit cannot be compared with a base commit");
+  assert.equal(calls.length,5,"noncommit requires second inventory and base readback, never comparison");
 });
 
 test("never silently accept a partial or malformed GitHub ref inventory",async()=>{
@@ -132,10 +135,53 @@ test("unavailable comparison and incomplete provider permissions never produce a
     {...input,repositoryId:null},
     {...input,observedBaseCommitId:"main"},
     {...input,repository:"../attacker"},
-    {...input,maxRefs:0}
+    {...input,maxRefs:0},
+    {...input,observedBaseRefName:"refs/tags/not-a-branch"}
   ]){
     const {client,calls}=provider({});
     await assert.rejects(observeArchiveRefSources(client,malformed));
     assert.equal(calls.length,0,"invalid source scope never calls GitHub");
   }
+});
+
+test("archive ref inventory must not change during exact source observation",async()=>{
+  let reads=0;
+  const routes={
+    [path+"/git/matching-refs/tags/archive/"]:()=>++reads===1
+      ?[ref("unprocessed","commit",SOURCE)]
+      :[ref("unprocessed","commit",UNRELATED)],
+    [path+"/compare/"+ROOT+"..."+SOURCE]:{ahead_by:2,behind_by:1}
+  };
+  const {client,calls}=provider(routes);
+  await assert.rejects(observeArchiveRefSources(client,input),/ref identities changed/u);
+  assert.equal(reads,2);
+  assert.ok(calls.every(([method])=>method==="GET"));
+});
+
+test("even an empty tag census rejects changed default branch",async()=>{
+  const routes={
+    [path+"/git/matching-refs/tags/archive/"]:[],
+    [path+"/git/ref/heads/main"]:{ref:"refs/heads/main",object:{type:"commit",sha:SOURCE}}
+  };
+  const {client,calls}=provider(routes);
+  await assert.rejects(observeArchiveRefSources(client,input),/default branch changed/u);
+  assert.equal(calls.filter(([,url])=>url===path+"/git/matching-refs/tags/archive/").length,2);
+  assert.equal(calls.at(-1)[1],path+"/git/ref/heads/main");
+});
+
+test("two complete empty inventories and unchanged Git base really produce an empty census",async()=>{
+  const routes={[path+"/git/matching-refs/tags/archive/"]:[]};
+  const {client,calls}=provider(routes);
+  assert.deepEqual(await observeArchiveRefSources(client,input),[]);
+  assert.equal(calls.length,3);
+});
+
+test("deep annotated tag chains refuse instead of pretending the source is a noncommit object",async()=>{
+  const ids="123456".split("").map(x=>x.repeat(40));
+  const routes={[path+"/git/matching-refs/tags/archive/"]:[ref("deep","tag",ids[0])]};
+  for(let i=0;i<5;i++)routes[path+"/git/tags/"+ids[i]]={
+    sha:ids[i],tag:i===0?"archive/deep":"nested-"+i,object:{type:"tag",sha:ids[i+1]}
+  };
+  const {client}=provider(routes);
+  await assert.rejects(observeArchiveRefSources(client,input),/chain exceeds bounded/u);
 });
