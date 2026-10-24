@@ -21,7 +21,7 @@ test("checksState reads check runs and the combined status", () => {
   assert.equal(checksState({ checkRuns: [], status: { total_count: 1, state: "failure" } }), "failing");
 });
 
-test("branchClass deletes only what the default branch already holds", () => {
+test("branchClass separates ancestry from receiving and unknown comparisons", () => {
   const base = { defaultBranch: "main", mergedHeadShas: new Set(["abc"]), openPullHeads: new Set(["open"]), isProtected: false, ahead_by: 3 };
   const branch = (name, sha = "zzz") => ({ name, commit: { sha } });
   assert.equal(branchClass({ ...base, branch: branch("main") }), "default");
@@ -29,6 +29,8 @@ test("branchClass deletes only what the default branch already holds", () => {
   assert.equal(branchClass({ ...base, branch: branch("x"), ahead_by: 0 }), "contained-in-default");
   assert.equal(branchClass({ ...base, branch: branch("squashed", "abc") }), "unique-commits");
   assert.equal(branchClass({ ...base, branch: branch("work") }), "unique-commits");
+  assert.equal(branchClass({ ...base, branch: branch("lost"), ahead_by: null }), "comparison-unavailable");
+  assert.equal(branchClass({ ...base, branch: branch("lost"), ahead_by: -1 }), "comparison-unavailable");
   assert.equal(branchClass({ ...base, branch: branch("rel"), isProtected: true, ahead_by: 0 }), "protected");
 });
 
@@ -155,12 +157,16 @@ test("original source read reports branch, issue and PR receiving candidates wit
   "receive-pull-source:5:false"
  ]);
  assert.equal(result.effectAuthority,"none; native Work receiving required");
- assert.equal(result.sourceCandidates.length,3);
+ assert.equal(result.sourceCandidates.length,4);
  assert.ok(result.sourceCandidates.every(c=>
   c.recordKind==="github.branch-source-reconciliation-candidate/v1"
   &&c.automaticRefRetirementAllowed===false
   &&c.originalWorkReceiving==="not-observed"));
  assert.equal(result.sourceCandidates[0].refName,"refs/heads/done");
+  const heldByPr=result.sourceCandidates.find(c=>c.refName==="refs/heads/pr-green");
+  assert.equal(heldByPr.technicalClassification,"has-open-pull-request");
+  assert.equal(heldByPr.automaticRefRetirementAllowed,false);
+  assert.equal(heldByPr.originalWorkReceiving,"not-observed");
 });
 
 test("historical apply cannot merge, close or delete; refused before original provider reads",async()=>{
@@ -182,7 +188,7 @@ test("historical apply cannot merge, close or delete; refused before original pr
  assert.equal(summarize([read]).branchesDeleted,0);
  assert.equal(summarize([read]).pullRequestsMerged,0);
  assert.equal(summarize([read]).issuesClosed,0);
- assert.equal(summarize([read]).branchSourceCandidates,3);
+ assert.equal(summarize([read]).branchSourceCandidates,4);
  assert.equal(summarize([read]).issueOutcomeCandidates,1);
 });
 
@@ -218,6 +224,9 @@ test("an observed protected or changed source cannot acquire retirement authorit
    const result=await reconcileRepo(client,repo,{now:NOW});
    assert.deepEqual(writes,[]);
    assert.ok(!result.actions.some(a=>a.applied));
+    const held=result.sourceCandidates.find(c=>c.refName==="refs/heads/done");
+    assert.ok(held,"protected and held branch source must still be reported");
+    assert.equal(held.automaticRefRetirementAllowed,false);
  }
 });
 
@@ -242,8 +251,23 @@ test("unread source comparison remains unknown, not a forced ref mutation",async
  assert.deepEqual(writes,[]);
  const candidate=result.sourceCandidates.find(x=>x.refName==="refs/heads/done");
  assert.equal(candidate.sourceLineageRelation,"not-observed");
+ assert.equal(candidate.technicalClassification,"comparison-unavailable");
  assert.equal(candidate.aheadCommitCount,null);
  assert.equal(candidate.automaticRefRetirementAllowed,false);
+});
+
+test("SHA-256 merge-base identities survive branch source observation without Work acceptance",async()=>{
+ const routes=world(),mergeBase="f".repeat(64);
+ routes["GET /repos/o/r/compare/main...done"]={ahead_by:2,behind_by:3,
+   merge_base_commit:{sha:mergeBase}};
+ const {client,writes}=fake(routes);
+ const read=await reconcileRepo(client,repo,{now:NOW});
+ const source=read.sourceCandidates.find(row=>row.refName==="refs/heads/done");
+ assert.equal(source.mergeBaseCommitId,mergeBase);
+ assert.equal(source.sourceLineageRelation,"diverged");
+ assert.equal(source.originalWorkReceiving,"not-observed");
+ assert.equal(source.automaticRefRetirementAllowed,false);
+ assert.deepEqual(writes,[]);
 });
 
 test("original equivalence source reader is useful but not a native content receiver",async()=>{
@@ -273,6 +297,8 @@ test("legacy merge flags without Work admission remain source-only",async()=>{
  const result=await reconcileRepo(client,repo,{maxMerges:0,mergeGreenPulls:true,now:NOW});
  assert.deepEqual(writes,[]);
  assert.equal(summarize([result]).pullRequestsMerged,0);
+ assert.equal(summarize([result]).pullRequestsMergeable,1,
+   "historical zero merge limit must not censor source-only PR reviews");
  assert.ok(result.actions.some(a=>a.kind==="receive-issue-outcome"));
 });
 

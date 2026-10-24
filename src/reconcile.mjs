@@ -79,7 +79,7 @@ export async function reconcileRepo(client, repo, options = {}) {
   }
 
   // Qualify current pull source; no merge can occur in a source observation.
-  let qualifiedPullSources = 0;
+
   for (const summary of openPulls) {
     const pull = await client.request("GET", `/repos/${repo}/pulls/${summary.number}`);
     const files = (await client.paginate(`/repos/${repo}/pulls/${pull.number}/files`)).map((file) => file.filename);
@@ -104,8 +104,9 @@ export async function reconcileRepo(client, repo, options = {}) {
     const provisional = pullClass({ pull, checks, files, changedOnBase, defaultBranch });
     const cls=!comparisonComplete&&provisional==="green-and-mergeable"
       ?"base-difference-incomplete":provisional;
-    if (cls === "green-and-mergeable" && qualifiedPullSources < maxMerges) {
-      qualifiedPullSources += 1;
+    // The observer has no merge actuator. A historical mutation limit must
+    // never hide genuine PR source candidates from Work receiving.
+    if (cls === "green-and-mergeable") {
       const action = { kind: "receive-pull-source", repo, target: pull.number, class: cls,
         recordKind:"github.pull-source-review-candidate/v1",sourceHeadCommitId:pull.head.sha,
         sourceBaseCommitId:pull.base.sha, applied:false,title:pull.title,
@@ -159,13 +160,15 @@ export async function reconcileRepo(client, repo, options = {}) {
     const cls = branchClass({ branch, defaultBranch, ahead_by: compare?.ahead_by ?? null, openPullHeads, isProtected: branch.protected });
     const aheadCommitCount=Number.isSafeInteger(compare?.ahead_by)&&compare.ahead_by>=0?compare.ahead_by:null;
     const behindCommitCount=Number.isSafeInteger(compare?.behind_by)&&compare.behind_by>=0?compare.behind_by:null;
-    const mergeBaseCommitId=/^[a-f0-9]{40}$/u.test(compare?.merge_base_commit?.sha??"")
+    const mergeBaseCommitId=/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(compare?.merge_base_commit?.sha??"")
       ?compare.merge_base_commit.sha:null;
     const sourceLineageRelation=aheadCommitCount===null||behindCommitCount===null||mergeBaseCommitId===null
       ?"not-observed":aheadCommitCount>0&&behindCommitCount>0?"diverged"
       :aheadCommitCount>0?"branch-ahead":behindCommitCount>0?"branch-behind":"identical";
-    if(["contained-in-default","unique-commits"].includes(cls))
-      sourceCandidates.push(Object.freeze({
+    // Every non-default branch is original code source, including protected
+    // heads, heads with open PRs and unavailable comparisons. Only the class
+    // differs; no technical observation establishes receiving or retirement.
+    sourceCandidates.push(Object.freeze({
         recordKind:"github.branch-source-reconciliation-candidate/v1",
         repositoryId:info.id,repositoryFullName:repo,refName:"refs/heads/"+branch.name,
         headCommitId:branch.commit?.sha??null,

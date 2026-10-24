@@ -25,6 +25,15 @@ branch; matching blobs do not receive the original requirements or consumers.
 The one original machine-readable CLI result remains the output carrier, and
 the same existing caller processes it rather than duplicating a debt register.
 
+The `branchSourceCandidates` now include **every non-default branch**, not only
+unprotected heads without an open PR. A protected branch, a branch with an open
+PR, and a branch whose GitHub comparison was unavailable still hold real
+source and original Work questions. An unavailable comparison is classified
+`comparison-unavailable`, **not** `unique-commits`; a historical
+`--max-merges 0` flag cannot suppress read-only PR source observations.
+Git SHA-1 and SHA-256 merge-base object IDs are both preserved when observed.
+No one of these facts authorizes branch deletion or PR merging.
+
 The `branchSourceCandidates` in this output carry original GitHub repository
 ID, standard fully-qualified `refs/heads/...` name, branch and default
 commit identity, `aheadCommitCount`, `behindCommitCount`, actual

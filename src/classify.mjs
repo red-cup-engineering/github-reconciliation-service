@@ -19,7 +19,10 @@ export function branchClass({ branch, defaultBranch, ahead_by, openPullHeads, is
   if (isProtected) return "protected";
   if (openPullHeads.has(branch.name)) return "has-open-pull-request";
   if (ahead_by === 0) return "contained-in-default";
-  return "unique-commits";
+  // An unavailable comparison is not evidence of unique commits. The
+  // technical unknown still has original source that must be received.
+  if (Number.isSafeInteger(ahead_by) && ahead_by > 0) return "unique-commits";
+  return "comparison-unavailable";
 }
 
 /** A technical Git ancestor relation, not a branch-deletion authority. */
