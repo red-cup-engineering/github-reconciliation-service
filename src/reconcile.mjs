@@ -44,28 +44,63 @@ export async function reconcileRepo(client, repo, options = {}) {
     const files = (await client.paginate(`/repos/${repo}/pulls/${pull.number}/files`)).map((file) => file.filename);
     const compare = await client.request("GET", `/repos/${repo}/compare/${pull.base.sha}...${path(defaultBranch)}`);
     const changedOnBase = new Set((compare.files ?? []).map((file) => file.filename));
-    const [checkRuns, status] = await Promise.all([
-      client.paginate(`/repos/${repo}/commits/${pull.head.sha}/check-runs`).catch(() => []),
-      client.request("GET", `/repos/${repo}/commits/${pull.head.sha}/status`).catch(() => null),
+    const [runsRead, statusRead] = await Promise.allSettled([
+      client.paginate(`/repos/${repo}/commits/${pull.head.sha}/check-runs`),
+      client.request("GET", `/repos/${repo}/commits/${pull.head.sha}/status`),
     ]);
-    const cls = pullClass({ pull, checks: checksState({ checkRuns, status }), files, changedOnBase, defaultBranch });
+    // Successful observation of either source is not evidence that the
+    // OTHER source is empty. Refuse a green verdict on partial CI visibility.
+    const checks = runsRead.status === "fulfilled" && Array.isArray(runsRead.value) &&
+      statusRead.status === "fulfilled" && Number.isSafeInteger(statusRead.value?.total_count) &&
+      typeof statusRead.value?.state === "string"
+      ? checksState({ checkRuns: runsRead.value, status: statusRead.value })
+      : "unavailable";
+    const cls = pullClass({ pull, checks, files, changedOnBase, defaultBranch });
     if (cls === "green-and-mergeable" && merges < maxMerges) {
       merges += 1;
       const action = { kind: "merge-pull-request", repo, target: pull.number, class: cls, applied: false, title: pull.title };
       if (apply && mergeGreenPulls) {
-        // Green test results alone cannot grant merge authority: the operator
-        // must explicitly enable qualified PR merges separately from pruning.
-        await client.request("PUT", `/repos/${repo}/pulls/${pull.number}/merge`, { merge_method: mergeMethod, sha: pull.head.sha });
-        action.applied = true;
-        mergedPulls.push({ ...pull, merged_at: now });
+        // Authorization is explicit; an attempted merge is not a completed
+        // merge. Read back the exact provider outcome before concluding the
+        // PR is merged or allowing its closing keywords to close Work.
+        try {
+          const receipt = await client.request("PUT", `/repos/${repo}/pulls/${pull.number}/merge`,
+            { merge_method: mergeMethod, sha: pull.head.sha });
+          if (receipt?.merged !== true || !/^[a-f0-9]{40}$/u.test(receipt.sha ?? ""))
+            throw new TypeError("GitHub returned no confirmed merge SHA");
+          action.providerAcknowledged = true;
+          action.mergeSha = receipt.sha;
+          const accepted = await client.request("GET", `/repos/${repo}/pulls/${pull.number}`);
+          if (accepted?.number !== pull.number || accepted?.state !== "closed" ||
+              accepted?.merged !== true || !accepted.merged_at ||
+              accepted.merge_commit_sha !== receipt.sha ||
+              accepted.base?.ref !== defaultBranch)
+            throw new TypeError("merged PR readback disagrees with provider merge receipt");
+          action.applied = true;
+          mergedPulls.push(accepted);
+        } catch (error) {
+          debts.push(debtRecord({ repo, kind: "pull-request", id: pull.number,
+            cls: "merge-receipt-unverified", title: pull.title, url: pull.html_url, now,
+            evidence: "Merge requested but its independently read-back state is unknown or contradictory; do not infer closure or retry blindly. " +
+              error.message }));
+        }
       }
       actions.push(action);
     } else if (cls !== "draft" && cls !== "mergeability-unknown" && old(pull.updated_at)) {
-      debts.push(debtRecord({ repo, kind: "pull-request", id: pull.number, cls, title: pull.title, url: pull.html_url, now }));
+      debts.push(debtRecord({ repo, kind: "pull-request", id: pull.number, cls, title: pull.title, url: pull.html_url, now,
+        ...(cls === "checks-unavailable"
+          ? { evidence: "GitHub check runs or commit statuses could not be fully observed; no green merge qualification." }
+          : {}) }));
     }
   }
 
-  const openPullHeads = new Set(openPulls.map((pull) => pull.head.ref));
+  // A fork PR can have the same short head ref as an unrelated local
+  // branch. Unknown origin remains conservative; known forks cannot
+  // indefinitely obstruct safe contained local branch retirement.
+  const openPullHeads = new Set(openPulls
+    .filter((pull) => !pull.head?.repo?.full_name ||
+      pull.head.repo.full_name.toLowerCase() === repo.toLowerCase())
+    .map((pull) => pull.head?.ref));
   const originalDefaultHead=branches.find(branch=>branch.name===defaultBranch)?.commit?.sha;
   let equivalentReceipts=0;
   for (const branch of branches) {

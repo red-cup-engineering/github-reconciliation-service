@@ -53,4 +53,10 @@ if (register) {
   mkdirSync(register, { recursive: true });
   for (const debt of results.flatMap((result) => result.debts)) writeFileSync(join(register, `${debt.id}.json`), JSON.stringify(debt, null, 2) + "\n");
 }
-console.log(JSON.stringify({ applied: options.apply, ...summarize(results), errors: results.filter((r) => r.error).map((r) => ({ repo: r.repo, error: r.error })), actions: results.flatMap((r) => r.actions) }, null, 2));
+const errors = results.filter((r) => r.error).map((r) => ({ repo: r.repo, error: r.error }));
+console.log(JSON.stringify({ applied: options.apply, ...summarize(results),
+  repositoriesObserved: results.length - errors.length, repositoriesFailed: errors.length,
+  errors, actions: results.flatMap((r) => r.actions) }, null, 2));
+// A partially observed repository estate is not a successful reconciliation.
+// Keep the machine-readable receipt on stdout, but fail the invoking job.
+if (errors.length) process.exitCode = 1;
