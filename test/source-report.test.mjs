@@ -15,7 +15,7 @@ function originalReport() {
     archiveRefCoverage: "complete-for-observed-repositories",
     sourceCutCoverage: "matching-open-github-source-cuts",
     branchesDeleted: 0, branchesDeletable: 0, issuesClosed: 0, pullRequestsMerged: 0,
-    equivalentCandidates: 2, pullRequestsMergeable: 1, originalPullsObserved:1, debtRecords: 4,
+    equivalentCandidates: 2, pullRequestsMergeable: 1, originalPullsObserved:1,
     branchSourceCandidateCount:1,
     archiveTagSourcesObserved: 1, originalIssuesObserved: 1,
     branchSourceCandidates: [{
@@ -124,6 +124,8 @@ test("unknown originating PR repository preserves unresolved source rather than 
 test("all forged source identity, coverage, effects and relation claims refuse",()=>{
   for(const change of [
     r=>{delete r.recordKind;},
+    r=>{r.debtRecords=1;},
+    r=>{r.debts=[{kind:"system-debt"}];},
     r=>{r.recordKind="system-debt";},
     r=>{delete r.branchSourceCandidates;},
     r=>{r.branchSourceCandidateCount=0;},
