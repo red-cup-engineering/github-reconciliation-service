@@ -134,103 +134,133 @@ const world = () => ({
   ],
 });
 
-test("a dry run reads everything and writes nothing", async () => {
-  const { client, writes } = fake(world());
-  const result = await reconcileRepo(client, repo, { now: NOW });
-  assert.deepEqual(writes, []);
-  assert.deepEqual(result.actions.map((a) => `${a.kind}:${a.target}:${a.applied}`).sort(), [
-    "delete-branch:done:false", "merge-pull-request:5:false",
-  ]);
+test("original source read reports branch, issue and PR receiving candidates without effects",async()=>{
+ const {client,writes}=fake(world());
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ assert.deepEqual(writes,[]);
+ assert.deepEqual(result.actions.map(a=>a.kind+":"+a.target+":"+a.applied).sort(),[
+  "receive-contained-branch-source:done:false",
+  "receive-issue-outcome:40:false",
+  "receive-pull-source:5:false"
+ ]);
+ assert.equal(result.effectAuthority,"none; native Work receiving required");
+ assert.equal(result.sourceCandidates.length,3);
+ assert.ok(result.sourceCandidates.every(c=>
+  c.recordKind==="github.branch-source-reconciliation-candidate/v1"
+  &&c.automaticRefRetirementAllowed===false
+  &&c.originalWorkReceiving==="not-observed"));
+ assert.equal(result.sourceCandidates[0].refName,"refs/heads/done");
 });
 
-test("apply merges the green pull request, deletes contained branches, closes the fixed issue, records the rest", async () => {
-  const { client, writes } = fake(world());
-  const result = await reconcileRepo(client, repo, { apply: true, mergeGreenPulls:true, closeIssues: true, now: NOW });
-  const sent = writes.map((w) => `${w.method} ${w.path}`);
-  assert.ok(sent.includes("PUT /repos/o/r/pulls/5/merge"));
-  assert.deepEqual(writes.find((w) => w.method === "PUT").body, { merge_method: "squash", sha: "g1" });
-  assert.ok(sent.includes("DELETE /repos/o/r/git/refs/heads/done"));
-  assert.ok(!sent.includes("DELETE /repos/o/r/git/refs/heads/squashed"));
-  assert.ok(!sent.some((s) => s.includes("heads/work") || s.includes("heads/main") || s.includes("heads/pr-green")));
-  assert.ok(sent.includes("PATCH /repos/o/r/issues/40"));
-  assert.ok(!sent.some((s) => s.includes("issues/41") || s.includes("issues/42") || s.includes("issues/43")));
-  assert.deepEqual(result.debts.map((d) => d.id).sort(), ["github-o-r-branch-work-unique-commits", "github-o-r-pull-request-6-conflicting"]);
-  assert.deepEqual(summarize([result]), { repos: 1, branchesDeleted: 1, equivalentHistoryReceived:0, equivalentHistoryRetired:0, equivalentCandidates:0, branchesDeletable: 1, pullRequestsMerged: 1, pullRequestsMergeable: 1, issuesClosed: 1, issuesClosable: 1,
-    archiveTagSourcesObserved: 0, archiveTagSourcesAwaitingReceiving: 0,
-    branchesHeldByArchiveSource: 0, debtRecords: 2 });
+test("historical apply cannot merge, close or delete; refused before original provider reads",async()=>{
+ const calls=[];
+ const client={request:async()=>{calls.push("request");throw Error("no provider access");},
+ paginate:async()=>{calls.push("paginate");throw Error("no provider access");}};
+ for(const options of [
+  {apply:true},
+  {apply:true,mergeGreenPulls:true,closeIssues:true},
+  {apply:true,receiveEquivalent:true,maxEquivalentMerges:3}
+ ]){
+  await assert.rejects(reconcileRepo(client,repo,{...options,now:NOW}),
+    /original Work\/consumer receiving required|Original Work\/consumer receiving required/i);
+ }
+ assert.deepEqual(calls,[],"a generic --apply never authorizes even provider reads");
+ const {client:observer,writes}=fake(world());
+ const read=await reconcileRepo(observer,repo,{now:NOW,mergeGreenPulls:true,closeIssues:true});
+ assert.deepEqual(writes,[]);
+ assert.equal(summarize([read]).branchesDeleted,0);
+ assert.equal(summarize([read]).pullRequestsMerged,0);
+ assert.equal(summarize([read]).issuesClosed,0);
+ assert.equal(summarize([read]).branchSourceCandidates,3);
+ assert.equal(summarize([read]).issueOutcomeCandidates,1);
 });
 
-test("issue closure is opt-in and unique squashed history is preserved", async () => {
-  const { client, writes } = fake(world());
-  const result = await reconcileRepo(client, repo, { apply: true, now: NOW });
-  assert.ok(!writes.some(w => w.method === "PATCH" && w.path.includes("/issues/")));
-  assert.ok(!writes.some(w => w.method === "PUT" && w.path.includes("/merge")));
-  assert.ok(!writes.some(w => w.method === "DELETE" && w.path.includes("heads/squashed")));
-  assert.ok(result.actions.some(a => a.kind === "delete-branch" && a.target === "done" && a.applied));
+test("closing-keyword discovery is always an unresolved original Work candidate",async()=>{
+ const {client,writes}=fake(world());
+ const result=await reconcileRepo(client,repo,{closeIssues:true,now:NOW});
+ assert.deepEqual(writes,[]);
+ assert.ok(result.actions.some(a=>a.kind==="receive-issue-outcome"
+   &&a.target===40&&a.automaticClosureAllowed===false
+   &&a.originalWorkReceiving==="not-observed"));
+ assert.equal(result.sourceCandidates.find(x=>x.refName==="refs/heads/squashed").technicalClassification,
+   "unique-commits");
 });
 
-test("new open PR appearing after inventory blocks deletion", async () => {
-  const routes = world();
-  routes["LIST /repos/o/r/pulls?state=open&head=o%3Adone"]=[{number:99}];
-  const {client,writes}=fake(routes);
-  const result=await reconcileRepo(client,repo,{apply:true,now:NOW});
-  assert.ok(!writes.some(w=>w.method==="DELETE"));
-  assert.ok(result.debts.some(d=>d.id.includes("changed-during-reconciliation")));
+test("a source-contained branch remains held even if no open PR has been observed",async()=>{
+ const {client,writes}=fake(world());
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ assert.ok(result.actions.some(a=>a.kind==="receive-contained-branch-source"
+   &&a.target==="done"&&a.refRetirementAllowed===false));
+ assert.deepEqual(writes,[],"lack of open PR is not original content acceptance");
 });
 
-test("moving head and acquiring protection block deletion", async () => {
-  for(const edits of [
-    {"GET /repos/o/r/branches/done": {commit:{sha:"d"},protected:true}},
-    {"GET /repos/o/r/git/ref/heads/done": {object:{sha:"later"}}},
-    {"GET /repos/o/r/branches/done": {commit:{sha:"later"},protected:false}},
-  ]){
-    const {client,writes}=fake({...world(),...edits});
-    const result=await reconcileRepo(client,repo,{apply:true,now:NOW});
-    assert.ok(!writes.some(w=>w.method==="DELETE"));
-    assert.ok(result.debts.some(d=>d.id.includes("changed-during-reconciliation")));
-  }
+test("an observed protected or changed source cannot acquire retirement authority",async()=>{
+ for(const edited of [
+   {"LIST /repos/o/r/branches":[
+     {name:"main",commit:{sha:"a".repeat(40)}},
+     {name:"done",protected:true,commit:{sha:"d"}}
+   ]},
+   {"GET /repos/o/r/compare/main...done":{ahead_by:1,behind_by:12,
+      merge_base_commit:{sha:"f".repeat(40)}}}
+ ]){
+   const {client,writes}=fake({...world(),...edited});
+   const result=await reconcileRepo(client,repo,{now:NOW});
+   assert.deepEqual(writes,[]);
+   assert.ok(!result.actions.some(a=>a.applied));
+ }
 });
 
-test("ahead branch is never nominated for deletion", async () => {
-  const {client,writes}=fake({...world(),
-    "GET /repos/o/r/compare/main...done":{ahead_by:1}});
-  const result=await reconcileRepo(client,repo,{apply:true,now:NOW});
-  assert.ok(!writes.some(w=>w.method==="DELETE"));
-  assert.ok(!result.actions.some(a=>a.kind==="delete-branch" && a.target==="done"));
+test("ahead branch is source needing reconciliation, never deletion permission",async()=>{
+ const {client,writes}=fake({...world(),
+  "GET /repos/o/r/compare/main...done":{ahead_by:1,behind_by:2,
+    merge_base_commit:{sha:"f".repeat(40)}}});
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ assert.deepEqual(writes,[]);
+ const c=result.sourceCandidates.find(x=>x.refName==="refs/heads/done");
+ assert.equal(c.sourceLineageRelation,"diverged");
+ assert.equal(c.automaticRefRetirementAllowed,false);
+ assert.equal(c.aheadCommitCount,1);
+ assert.equal(c.behindCommitCount,2);
 });
 
-test("missing old branch after concurrent auto-deletion is contained and nonfatal", async () => {
-  const routes=world();delete routes["GET /repos/o/r/git/ref/heads/done"];
-  const {client,writes}=fake(routes);
-  const result=await reconcileRepo(client,repo,{apply:true,now:NOW});
-  assert.ok(!writes.some(w=>w.method==="DELETE"));
-  assert.ok(result.debts.some(d=>d.id.includes("changed-during-reconciliation")));
+test("unread source comparison remains unknown, not a forced ref mutation",async()=>{
+ const routes=world();
+ delete routes["GET /repos/o/r/compare/main...done"];
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ assert.deepEqual(writes,[]);
+ const candidate=result.sourceCandidates.find(x=>x.refName==="refs/heads/done");
+ assert.equal(candidate.sourceLineageRelation,"not-observed");
+ assert.equal(candidate.aheadCommitCount,null);
+ assert.equal(candidate.automaticRefRetirementAllowed,false);
 });
 
-test("equivalent-history dry-run produces a checked candidate, not a deletion",async()=>{
+test("original equivalence source reader is useful but not a native content receiver",async()=>{
  const routes=world();
  routes["GET /repos/o/r/contents/src/a.mjs?ref=main"]={sha:"sha1",type:"file"};
  routes["GET /repos/o/r/contents/src/a.mjs?ref=squashed"]={sha:"sha1",type:"file"};
  routes["GET /repos/o/r/compare/main...squashed"]={
-   ahead_by:2,files:[{filename:"src/a.mjs",status:"modified"}],
- };
+  ahead_by:2,files:[{filename:"src/a.mjs",status:"modified"}]};
  const {client,writes}=fake(routes);
  const result=await reconcileRepo(client,repo,{
-   receiveEquivalent:true,apply:false,now:NOW,maxEquivalentMerges:1,
- });
- const received=result.actions.filter(a=>a.kind==="receive-equivalent-branch");
- assert.equal(received.length,1);
- assert.equal(received[0].target,"squashed");
- assert.equal(received[0].verifiedFiles,1);
- assert.equal(received[0].applied,false);
+   receiveEquivalent:true,now:NOW,maxEquivalentMerges:1});
+ const assessment=result.actions.filter(a=>a.kind==="assess-equivalent-branch-source");
+ assert.equal(assessment.length,1);
+ assert.equal(assessment[0].target,"squashed");
+ assert.equal(assessment[0].verifiedFiles,1);
+ assert.equal(assessment[0].applied,false);
+ assert.equal(assessment[0].deleted,false);
  assert.deepEqual(writes,[]);
  assert.equal(summarize([result]).equivalentCandidates,1);
+ assert.equal(summarize([result]).equivalentHistoryRetired,0);
 });
 
-test("max-merges caps merges per run", async () => {
-  const { client, writes } = fake(world());
-  await reconcileRepo(client, repo, { apply: true, maxMerges: 0, now: NOW });
-  assert.ok(!writes.some((w) => w.method === "PUT"));
+test("legacy merge flags without Work admission remain source-only",async()=>{
+ const {client,writes}=fake(world());
+ const result=await reconcileRepo(client,repo,{maxMerges:0,mergeGreenPulls:true,now:NOW});
+ assert.deepEqual(writes,[]);
+ assert.equal(summarize([result]).pullRequestsMerged,0);
+ assert.ok(result.actions.some(a=>a.kind==="receive-issue-outcome"));
 });
 
 test("off-origin pagination refuses rather than leaking the GitHub credential",async()=>{
@@ -315,84 +345,61 @@ test("unavailable GitHub check-runs cannot be masked by passing commit statuses"
   assert.ok(result.debts.some(d => d.id.includes("checks-unavailable")));
 });
 
-test("unconfirmed merge response must not imply accepted Work or close its issue", async () => {
-  for (const mismatch of ["missing-ack", "missing-readback"]) {
-    const routes = world();
-    routes["LIST /repos/o/r/pulls?state=closed&sort=updated&direction=desc"] = [];
-    routes["GET /repos/o/r/pulls/5"] = { ...routes["GET /repos/o/r/pulls/5"], body: "Fixes #42" };
-    if (mismatch === "missing-ack")
-      routes["MERGE /repos/o/r/pulls/5/merge"] = { merged: false };
-    else
-      routes["MERGED READBACK /repos/o/r/pulls/5"] = false;
-    const { client, writes } = fake(routes);
-    const result = await reconcileRepo(client, repo, {
-      apply: true, mergeGreenPulls: true, closeIssues: true, now: NOW,
-    });
-    assert.ok(writes.some(w => w.method === "PUT" && w.path.includes("/merge")));
-    assert.ok(!writes.some(w => w.path.includes("/issues/42")));
-    assert.ok(result.debts.some(d => d.id.includes("merge-receipt-unverified")));
-    assert.equal(result.actions.find(a => a.kind === "merge-pull-request").applied, false);
-  }
+test("source-observer never issues even a seemingly successful PR merge",async()=>{
+ const routes=world();
+ routes["GET /repos/o/r/pulls/5"]={...routes["GET /repos/o/r/pulls/5"],body:"Fixes #42"};
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{mergeGreenPulls:true,closeIssues:true,now:NOW});
+ assert.deepEqual(writes,[]);
+ assert.equal(result.actions.find(x=>x.kind==="receive-pull-source").originalWorkReceiving,"not-observed");
+ assert.equal(summarize([result]).pullRequestsMerged,0);
+ assert.equal(summarize([result]).issuesClosed,0);
 });
 
-
-test("one unresolved archive tag is first-class original source and holds a contained branch",async()=>{
- const routes=world();
- const tip="d".repeat(40);
+test("archive tag ref and contained branch remain distinct unreceived source",async()=>{
+ const routes=world(),tip="d".repeat(40);
  routes["LIST /repos/o/r/branches"][1].commit.sha=tip;
- const original="refs/tags/archive/agent/one-unreceived-work";
+ const tag="refs/tags/archive/agent/one-unreceived-work";
  routes["GET /repos/o/r/git/matching-refs/tags/archive/"]=[
-   {ref:original,object:{type:"commit",sha:tip}}
- ];
+   {ref:tag,object:{type:"commit",sha:tip}}];
  routes["GET /repos/o/r/compare/"+"a".repeat(40)+"..."+tip]=
    {ahead_by:0,behind_by:5,status:"behind"};
  const {client,writes}=fake(routes);
- const result=await reconcileRepo(client,repo,{apply:true,closeIssues:true,now:NOW});
+ const result=await reconcileRepo(client,repo,{now:NOW,closeIssues:true});
  assert.equal(result.sourceObservations.length,1);
- assert.equal(result.sourceObservations[0].refName,original);
- assert.equal(result.sourceObservations[0].peeledCommitId,tip);
+ assert.equal(result.sourceObservations[0].refName,tag);
  assert.equal(result.sourceObservations[0].originalIssueReceiving,"not-observed");
  assert.equal(result.sourceObservations[0].automaticRefRetirementAllowed,false);
- assert.ok(result.actions.some(a=>a.kind==="receive-archive-tag-source" &&
-   a.target===original && !a.applied));
- assert.ok(result.actions.some(a=>a.kind==="delete-branch" && a.target==="done" &&
-   a.refRetirementAllowed===false && !a.applied));
- assert.ok(!writes.some(w=>w.method==="DELETE"),"tag/branch kept even when --apply");
- assert.ok(result.debts.some(d=>d.id.includes("archive-ref-source-not-received")));
- assert.equal(summarize([result]).archiveTagSourcesAwaitingReceiving,1);
+ const held=result.sourceCandidates.find(x=>x.refName==="refs/heads/done");
+ assert.deepEqual(held.matchingArchiveRefNames,[tag]);
+ assert.equal(held.automaticRefRetirementAllowed,false);
  assert.equal(summarize([result]).branchesHeldByArchiveSource,1);
+ assert.equal(summarize([result]).archiveTagSourcesAwaitingReceiving,1);
+ assert.deepEqual(writes,[]);
 });
 
-test("an attempted issue closure needs exact GitHub issue readback; unknown is not Work receipt",async()=>{
- for(const failure of [false,{number:40,state:"open",state_reason:null},
-   {number:42,state:"closed",state_reason:"completed"}]){
-   const routes=world();
-   routes["ISSUE READBACK /repos/o/r/issues/40"]=failure;
-   const {client,writes}=fake(routes);
-   const result=await reconcileRepo(client,repo,{apply:true,closeIssues:true,now:NOW});
-   const action=result.actions.find(a=>a.kind==="close-issue" && a.target===40);
-   assert.equal(action.applied,false,"a PATCH without authentic exact issue state is not a success");
-   assert.equal(action.reason,"issue-closure-readback-unverified");
-   assert.ok(result.debts.some(d=>d.id.includes("issue-closure-readback-unverified")));
-   assert.ok(writes.some(w=>w.method==="PATCH" && w.path.endsWith("/issues/40")));
-   assert.equal(summarize([result]).issuesClosed,0);
+test("merged PR's closing keyword is not a supported issue closure or approval",async()=>{
+ for(const flags of [{closeIssues:true},{closeIssues:false},{mergeGreenPulls:true}]){
+  const {client,writes}=fake(world());
+  const result=await reconcileRepo(client,repo,{now:NOW,...flags});
+  const issue=result.actions.find(a=>a.kind==="receive-issue-outcome"&&a.target===40);
+  assert.equal(issue.recordKind,"github.issue-outcome-receiving-candidate/v1");
+  assert.equal(issue.originalWorkReceiving,"not-observed");
+  assert.equal(issue.independentBeneficiaryReceiving,"not-observed");
+  assert.equal(issue.automaticClosureAllowed,false);
+  assert.deepEqual(writes,[]);
+  assert.equal(summarize([result]).issuesClosed,0);
  }
- const {client}=fake(world());
- const good=await reconcileRepo(client,repo,{apply:true,closeIssues:true,now:NOW});
- const action=good.actions.find(a=>a.kind==="close-issue" && a.target===40);
- assert.equal(action.applied,true);
- assert.equal(action.providerIssueState,"closed");
- assert.equal(action.originalWorkReceived,false,
-   "GitHub issue closure is never independent original Work acceptance");
 });
 
-test("an open fork PR with an identical short head name does not pin local contained history", async () => {
-  const routes = world();
-  routes["LIST /repos/o/r/pulls?state=open"][1].head = {
-    ref: "done", repo: { full_name: "someone-else/r" }, sha: "r1",
-  };
-  const { client, writes } = fake(routes);
-  const result = await reconcileRepo(client, repo, { apply: true, now: NOW });
-  assert.ok(result.actions.some(a => a.kind === "delete-branch" && a.target === "done" && a.applied));
-  assert.ok(writes.some(w => w.method === "DELETE" && w.path.endsWith("/heads/done")));
+test("foreign fork naming a local branch does not grant ref retirement",async()=>{
+ const routes=world();
+ routes["LIST /repos/o/r/pulls?state=open"][1].head={
+  ref:"done",repo:{full_name:"someone-else/r"},sha:"r1"};
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ assert.deepEqual(writes,[]);
+ const branch=result.sourceCandidates.find(x=>x.refName==="refs/heads/done");
+ assert.equal(branch.automaticRefRetirementAllowed,false);
+ assert.equal(branch.technicalClassification,"contained-in-default");
 });

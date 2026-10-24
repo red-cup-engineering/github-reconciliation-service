@@ -66,3 +66,13 @@ globalThis.fetch = async (url, init) => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The actual CLI must refuse unreceived effects even without a token.
+// This is a process-level native boundary, not only an imported helper.
+test("--apply refuses before credential access or GitHub network requests",()=>{
+ const command=spawnSync(process.execPath,[cli,"--repo","o/r","--apply"],{
+   encoding:"utf8",env:{...process.env,GITHUB_TOKEN:"",CREDENTIALS_DIRECTORY:""}});
+ assert.notEqual(command.status,0);
+ assert.match(command.stderr,/--apply refused/u);
+ assert.doesNotMatch(command.stderr,/no token:/u);
+});
