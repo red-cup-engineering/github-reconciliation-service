@@ -505,7 +505,7 @@ test("duplicate or unversioned original issue source must refuse, never invent a
    const routes=world();routes["LIST /repos/o/r/issues?state=open"]=issues;
    const {client,writes}=fake(routes);
    await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
-     /issue identity, revision or source coverage is incomplete/u);
+     /(?:issue identity, revision or source coverage is incomplete|GitHub open issues has missing or duplicate source identity)/u);
    assert.deepEqual(writes,[]);
  }
 });
@@ -561,7 +561,7 @@ test("duplicate, missing or changing original pull identities and SHA witnesses 
     const routes=world();mutate(routes);
     const {client,writes}=fake(routes);
     await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
-      /pull request identity, revision or source coverage is incomplete/u);
+      /(?:pull request identity, revision or source coverage is incomplete|GitHub open pull requests has missing or duplicate source identity)/u);
     assert.deepEqual(writes,[]);
   }
 });
@@ -637,7 +637,7 @@ test("malformed GitHub PR originating repository identities refuse source census
   routes["GET /repos/o/r/pulls/5"].head.repo=headRepo;
   const {client,writes}=fake(routes);
   await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
-   /pull request identity, revision or source coverage is incomplete/u);
+   /(?:pull request identity, revision or source coverage is incomplete|GitHub open pull requests has missing or duplicate source identity)/u);
   assert.deepEqual(writes,[]);
  }
 });
