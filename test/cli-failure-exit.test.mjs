@@ -50,6 +50,8 @@ globalThis.fetch = async (url, init) => {
     assert.deepEqual(success.archiveRefSources,[]);
     assert.deepEqual(success.originalIssueSources,[]);
     assert.deepEqual(success.pullSourceCandidates,[]);
+    assert.deepEqual(success.branchSourceCandidates,[]);
+    assert.equal(success.branchSourceCandidateCount,0);
     assert.equal(success.originalPullsObserved,0);
     assert.equal(success.originalIssuesObserved,0);
     assert.equal(success.archiveTagSourcesObserved,0);
