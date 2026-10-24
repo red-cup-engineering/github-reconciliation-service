@@ -505,7 +505,7 @@ test("duplicate or unversioned original issue source must refuse, never invent a
    const routes=world();routes["LIST /repos/o/r/issues?state=open"]=issues;
    const {client,writes}=fake(routes);
    await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
-     /(?:issue identity, revision or source coverage is incomplete|GitHub open issues has missing or duplicate source identity)/u);
+     /(?:issue identity, revision or source coverage is incomplete|GitHub open issues has missing or duplicate source identity|GitHub open issue source identity not observed)/u);
    assert.deepEqual(writes,[]);
  }
 });
