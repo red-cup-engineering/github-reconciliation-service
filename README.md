@@ -136,3 +136,15 @@ are created.
 `systemd/github-reconcile.timer` and its service file describe an **optional, not-yet-independently-received deployment**. They are not evidence of an installed/active timer, an available sealed credential, a published registry artifact, or completed host receiving. Do not enable the timer merely by merging this source. The intended design uses `LoadCredentialEncrypted` when an authorized host installs it.
 
 `cd services/.../github-reconciliation-service && node --test test/*.test.mjs`
+
+### Source-only operation (native owner boundary)
+
+The GitHub provider observer's old PR-merge, issue-closing and branch-delete code
+has been removed, not merely hidden behind an `--apply` refusal. The original
+`SOURCE_CONTAINMENT_CLASSES` describes Git ancestry only; the legacy
+`DELETABLE_BRANCH_CLASSES` export is empty. Source-byte-equivalence still
+selects exact historical evidence and makes no history/consumer receiving
+claim. GitHub Engineering's original revision-leased operations remain the
+only admissible actuator once original Work and independent receiving qualify
+the concrete effect. `test/reconcile.test.mjs` enforces this source boundary
+in addition to the existing no-effect provider fixtures.

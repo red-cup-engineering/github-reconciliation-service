@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+import {SOURCE_CONTAINMENT_CLASSES, DELETABLE_BRANCH_CLASSES} from "../src/classify.mjs";
 import { branchClass, checksState, issueClosers, pullClass } from "../src/classify.mjs";
 import { reconcileRepo, summarize } from "../src/reconcile.mjs";
 import { createClient } from "../src/github-client.mjs";
@@ -403,4 +405,12 @@ test("foreign fork naming a local branch does not grant ref retirement",async()=
  const branch=result.sourceCandidates.find(x=>x.refName==="refs/heads/done");
  assert.equal(branch.automaticRefRetirementAllowed,false);
  assert.equal(branch.technicalClassification,"contained-in-default");
+});
+
+
+test("source reader has no hidden GitHub merge, issue-close or ref-delete calls",()=>{
+ const source=readFileSync(new URL("../src/reconcile.mjs",import.meta.url),"utf8");
+ assert.doesNotMatch(source,/client\.request\("(?:POST|PUT|PATCH|DELETE)"/u);
+ assert.equal(DELETABLE_BRANCH_CLASSES.size,0);
+ assert.equal(SOURCE_CONTAINMENT_CLASSES.has("contained-in-default"),true);
 });

@@ -1,4 +1,4 @@
-import { branchClass, checksState, DELETABLE_BRANCH_CLASSES, issueClosers, pullClass } from "./classify.mjs";
+import { branchClass, checksState, SOURCE_CONTAINMENT_CLASSES, issueClosers, pullClass } from "./classify.mjs";
 import { debtRecord } from "./debt-record.mjs";
 import { receiveEquivalentBranch } from "./receive-equivalent.mjs";
 import { observeArchiveRefSources } from "./archive-ref-observation.mjs";
@@ -18,9 +18,10 @@ export async function listRepos(client, orgs) {
 }
 
 /**
- * Reconcile one repository. Reads are always made. Writes (delete a contained branch, merge a green
- * pull request, close an issue a merged pull request fixed) are made only with `apply`; every other
- * item becomes a debt record. Nothing is archived and no repository is deleted.
+ * Read one original GitHub repository's open Work/source and archive ref relations.
+ * Source containment, checks, and closing keywords are evidence, not effect authority.
+ * This public component has no write path; native GitHub Engineering handles exact
+ * Work- and consumer-received integration and retirement. Nothing is archived.
  */
 export async function reconcileRepo(client, repo, options = {}) {
   const { apply = false, mergeGreenPulls = false, receiveEquivalent = false, maxEquivalentMerges = 8, closeIssues = false, mergeMethod = "squash", maxMerges = 25, minAgeDays = 2, now = new Date().toISOString() } = options;
@@ -45,8 +46,8 @@ export async function reconcileRepo(client, repo, options = {}) {
   ]);
   const mergedPulls = closedPulls.filter((pull) => pull.merged_at);
 
-  // Pull requests first, so a merge can make its branch contained in the same pulse.
-  let merges = 0;
+  // Qualify current pull source; no merge can occur in a source observation.
+  let qualifiedPullSources = 0;
   for (const summary of openPulls) {
     const pull = await client.request("GET", `/repos/${repo}/pulls/${summary.number}`);
     const files = (await client.paginate(`/repos/${repo}/pulls/${pull.number}/files`)).map((file) => file.filename);
@@ -64,39 +65,14 @@ export async function reconcileRepo(client, repo, options = {}) {
       ? checksState({ checkRuns: runsRead.value, status: statusRead.value })
       : "unavailable";
     const cls = pullClass({ pull, checks, files, changedOnBase, defaultBranch });
-    if (cls === "green-and-mergeable" && merges < maxMerges) {
-      merges += 1;
+    if (cls === "green-and-mergeable" && qualifiedPullSources < maxMerges) {
+      qualifiedPullSources += 1;
       const action = { kind: "receive-pull-source", repo, target: pull.number, class: cls,
         recordKind:"github.pull-source-review-candidate/v1",sourceHeadCommitId:pull.head.sha,
         sourceBaseCommitId:pull.base.sha, applied:false,title:pull.title,
         originalWorkReceiving:"not-observed",ordinaryConsumerReceiving:"not-observed",
         mergeAuthority:"not-granted-by-observer" };
-      if (apply && mergeGreenPulls) {
-        // Authorization is explicit; an attempted merge is not a completed
-        // merge. Read back the exact provider outcome before concluding the
-        // PR is merged or allowing its closing keywords to close Work.
-        try {
-          const receipt = await client.request("PUT", `/repos/${repo}/pulls/${pull.number}/merge`,
-            { merge_method: mergeMethod, sha: pull.head.sha });
-          if (receipt?.merged !== true || !/^[a-f0-9]{40}$/u.test(receipt.sha ?? ""))
-            throw new TypeError("GitHub returned no confirmed merge SHA");
-          action.providerAcknowledged = true;
-          action.mergeSha = receipt.sha;
-          const accepted = await client.request("GET", `/repos/${repo}/pulls/${pull.number}`);
-          if (accepted?.number !== pull.number || accepted?.state !== "closed" ||
-              accepted?.merged !== true || !accepted.merged_at ||
-              accepted.merge_commit_sha !== receipt.sha ||
-              accepted.base?.ref !== defaultBranch)
-            throw new TypeError("merged PR readback disagrees with provider merge receipt");
-          action.applied = true;
-          mergedPulls.push(accepted);
-        } catch (error) {
-          debts.push(debtRecord({ repo, kind: "pull-request", id: pull.number,
-            cls: "merge-receipt-unverified", title: pull.title, url: pull.html_url, now,
-            evidence: "Merge requested but its independently read-back state is unknown or contradictory; do not infer closure or retry blindly. " +
-              error.message }));
-        }
-      }
+      // An assessed pull request does not author or merge its source.
       actions.push(action);
     } else if (cls !== "draft" && cls !== "mergeability-unknown" && old(pull.updated_at)) {
       debts.push(debtRecord({ repo, kind: "pull-request", id: pull.number, cls, title: pull.title, url: pull.html_url, now,
@@ -160,7 +136,7 @@ export async function reconcileRepo(client, repo, options = {}) {
         automaticRefRetirementAllowed:false,
         firstReceivingAction:"reconcile-source-requirements-issues-and-ordinary-consumer-at-native-github-owner"
       }));
-    if (DELETABLE_BRANCH_CLASSES.has(cls)) {
+    if (SOURCE_CONTAINMENT_CLASSES.has(cls)) {
       const action = { kind: "receive-contained-branch-source", repo, target: branch.name,
         recordKind:"github.branch-source-reconciliation-candidate/v1",
         class:cls,applied:false,refRetirementAllowed:false,
@@ -176,34 +152,6 @@ export async function reconcileRepo(client, repo, options = {}) {
           evidence:"Same commit remains under an archive-named tag; source, original issue and installed consumer acceptance have not been independently received."}));
         actions.push(action);
         continue;
-      }
-      if (apply) {
-        let head, branchNow, latest, openNow;
-        try {
-          [head, branchNow, latest, openNow] = await Promise.all([
-            client.request("GET", `/repos/${repo}/git/ref/heads/${path(branch.name)}`),
-            client.request("GET", `/repos/${repo}/branches/${path(branch.name)}`),
-            client.request("GET", `/repos/${repo}/compare/${path(defaultBranch)}...${path(branch.name)}`),
-            client.paginate(`/repos/${repo}/pulls?state=open&head=${encodeURIComponent(repo.split("/")[0] + ":" + branch.name)}`),
-          ]);
-        } catch (error) {
-          debts.push(debtRecord({ repo, kind:"branch", id:branch.name,
-            cls:"changed-during-reconciliation", now,
-            evidence:"Pre-delete verification unavailable; ref left intact: "+error.message }));
-          actions.push(action);
-          continue;
-        }
-        if (head.object?.sha !== branch.commit.sha ||
-            branchNow.commit?.sha !== branch.commit.sha ||
-            branchNow.protected !== false || latest.ahead_by !== 0 ||
-            !Array.isArray(openNow) || openNow.length !== 0) {
-          debts.push(debtRecord({ repo, kind:"branch", id:branch.name,
-            cls:"changed-during-reconciliation", now,
-            evidence:"Head, protection, open PRs, or containment changed; ref left intact." }));
-        } else {
-          await client.request("DELETE", `/repos/${repo}/git/refs/heads/${path(branch.name)}`);
-          action.applied = true;
-        }
       }
       actions.push(action);
     } else if (cls === "unique-commits") {
@@ -223,16 +171,13 @@ export async function reconcileRepo(client, repo, options = {}) {
           equivalentReceipts++;
           actions.push({
             kind:"assess-equivalent-branch-source",repo,target:branch.name,
-            class:"content-equivalent",applied:receipt.received,
-            deleted:receipt.deleted,prNumber:receipt.prNumber??null,
+            class:"source-byte-equivalent",applied:false,effectPermitted:false,
+            automaticRefRetirementAllowed:false,
+            originalWorkReceiving:"not-observed",ordinaryConsumerReceiving:"not-observed",
+            firstReceivingAction:"receive-distinct-source-history-and-ordinary-consumer-at-native-owner",
             verifiedFiles:receipt.fileCount,reason:receipt.reason,
           });
-          if (apply && (!receipt.received || !receipt.deleted))
-            debts.push(debtRecord({repo,kind:"branch",id:branch.name,
-              cls:"equivalent-receiving-blocked",now,
-              evidence:"Equivalent history was not fully received and retired: "+
-                receipt.reason+(receipt.detail?" "+receipt.detail:"")+
-                (receipt.closeProblem?"; PR close failed: "+receipt.closeProblem:"")}));
+          // A proven byte identity is not a received Git history or operating result.
           continue;
         }
       }
@@ -252,28 +197,7 @@ export async function reconcileRepo(client, repo, options = {}) {
         class:"named-by-merged-pull-request",applied:false,by:pull.html_url,
         originalWorkReceiving:"not-observed",independentBeneficiaryReceiving:"not-observed",
         automaticClosureAllowed:false };
-      if (apply) {
-        // A completed HTTP request is not a provider-observed issue state.
-        // Retain an unconfirmed closure as debt; never repeat a write blindly.
-        try{
-          await client.request("POST", `/repos/${repo}/issues/${issue.number}/comments`,
-            { body: `Closed because ${pull.html_url} merged and states that it fixes this issue.` });
-          await client.request("PATCH", `/repos/${repo}/issues/${issue.number}`,
-            { state: "closed", state_reason: "completed" });
-          const readback=await client.request("GET",`/repos/${repo}/issues/${issue.number}`);
-          if(readback?.number!==issue.number || readback?.state!=="closed" ||
-             readback?.state_reason!=="completed" || Boolean(readback?.pull_request))
-            throw new TypeError("GitHub issue closure readback was not independently received");
-          action.applied=true;
-          action.providerIssueState="closed";
-          action.originalWorkReceived=false; // GitHub issue status does not grant original Work closure.
-        }catch(error){
-          action.reason="issue-closure-readback-unverified";
-          debts.push(debtRecord({repo,kind:"issue",id:issue.number,
-            cls:"issue-closure-readback-unverified",now,
-            evidence:"GitHub issue closure attempted but the exact provider state is unknown or contradicted. Independently reconcile before retry."}));
-        }
-      }
+      // A GitHub closing keyword cannot close original Work.
       actions.push(action);
     }
   }

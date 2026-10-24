@@ -1,6 +1,6 @@
 /**
- * Mechanical classes. Each function is pure: the same inputs give the same class, and the
- * class names the action. Nothing here asks a model.
+ * Mechanical Git source classes. Each function is pure and no classification
+ * grants effect authority; the original Work and consumer must be received.
  */
 
 const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"]);
@@ -19,7 +19,10 @@ export function branchClass({ branch, defaultBranch, ahead_by, openPullHeads, is
   return "unique-commits";
 }
 
-export const DELETABLE_BRANCH_CLASSES = new Set(["contained-in-default"]);
+/** A technical Git ancestor relation, not a branch-deletion authority. */
+export const SOURCE_CONTAINMENT_CLASSES = new Set(["contained-in-default"]);
+/** Historic export retained for callers; intentionally authorizes no deletion. */
+export const DELETABLE_BRANCH_CLASSES = new Set();
 
 /** Check state of one head commit from its check runs and combined status. */
 export function checksState({ checkRuns, status }) {
