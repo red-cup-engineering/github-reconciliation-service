@@ -37,6 +37,7 @@ test("pullClass orders its tests: draft, unknown, superseded, conflict, checks, 
   assert.equal(pullClass(args({ mergeable: false, mergeable_state: "dirty" })), "conflicting");
   assert.equal(pullClass(args({}, { checks: "failing" })), "checks-failing");
   assert.equal(pullClass(args({}, { checks: "none" })), "no-checks");
+  assert.equal(pullClass(args({}, { checks: "unavailable" })), "checks-unavailable");
   assert.equal(pullClass(args({ mergeable_state: "blocked" })), "not-clean-blocked");
   assert.equal(pullClass(args({ base: { ref: "dev" } })), "not-against-default");
 });
@@ -52,9 +53,24 @@ test("issueClosers needs a closing keyword and a number with #, in this reposito
 /** A fake GitHub keyed by "METHOD path"; records every write. */
 function fake(routes) {
   const writes = [];
+  const merged = new Set();
+  const MERGE_SHA = "a".repeat(40);
   const client = {
     async request(method, path, body) {
-      if (method !== "GET") { writes.push({ method, path, body }); return null; }
+      if (method !== "GET") {
+        writes.push({ method, path, body });
+        if (method === "PUT" && /\/pulls\/\d+\/merge$/u.test(path)) {
+          const response = routes[`MERGE ${path}`] ?? { merged: true, sha: MERGE_SHA };
+          if (response?.merged === true) merged.add(Number(path.match(/\/pulls\/(\d+)\/merge$/u)[1]));
+          return response;
+        }
+        return null;
+      }
+      if (path === "/repos/o/r/pulls/5" && merged.has(5) &&
+          routes["MERGED READBACK /repos/o/r/pulls/5"] !== false) {
+        return { ...routes["GET /repos/o/r/pulls/5"], state: "closed", merged: true,
+          merged_at: NOW, merge_commit_sha: MERGE_SHA };
+      }
       const hit = Object.entries(routes).find(([key]) => key === `GET ${path}`);
       if (!hit) throw Object.assign(new Error(`no route ${path}`), { status: 404 });
       return hit[1];
@@ -237,4 +253,83 @@ test("createClient follows Link rel=next and sends the token", async () => {
   const items = await createClient({ token: "t", fetchImpl }).paginate("/x");
   assert.deepEqual(items, [{ n: 1 }, { n: 2 }]);
   assert.deepEqual(calls, ["Bearer t", "Bearer t"]);
+});
+
+test("GitHub check_runs envelope is not silently read as zero checks", async () => {
+  const calls = [];
+  const pages = {
+    "https://api.github.com/repos/o/r/commits/c/check-runs?per_page=100":
+      [{ total_count: 2, check_runs: [{ status: "completed", conclusion: "success" }] },
+        '<https://api.github.com/repos/o/r/commits/c/check-runs?page=2>; rel="next"'],
+    "https://api.github.com/repos/o/r/commits/c/check-runs?page=2":
+      [{ total_count: 2, check_runs: [{ status: "completed", conclusion: "failure" }] }, null],
+  };
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    const [body, link] = pages[url];
+    return { ok: true, status: 200, headers: new Headers(link ? { link } : {}),
+      text: async () => JSON.stringify(body) };
+  };
+  const runs = await createClient({ fetchImpl }).paginate("/repos/o/r/commits/c/check-runs");
+  assert.equal(runs.length, 2);
+  assert.equal(checksState({ checkRuns: runs, status: { total_count: 0, state: "success" } }), "failing");
+  assert.equal(calls.length, 2);
+});
+
+test("truncated, inconsistent and unknown GitHub check collections fail closed", async () => {
+  for (const body of [
+    { total_count: 2, check_runs: [{ status: "completed", conclusion: "success" }] },
+    { total_count: "1", check_runs: [] },
+    { total_count: 1, unrecognized: [{ status: "completed", conclusion: "success" }] },
+  ]) {
+    const client = createClient({ fetchImpl: async () => ({
+      ok: true, status: 200, headers: new Headers(),
+      text: async () => JSON.stringify(body),
+    }) });
+    await assert.rejects(client.paginate("/repos/o/r/commits/c/check-runs"),
+      /incomplete|total_count|unsupported collection envelope/u);
+  }
+});
+
+test("unavailable GitHub check-runs cannot be masked by passing commit statuses", async () => {
+  const routes = world();
+  delete routes["LIST /repos/o/r/commits/g1/check-runs"];
+  routes["GET /repos/o/r/commits/g1/status"] = { total_count: 1, state: "success" };
+  const { client, writes } = fake(routes);
+  const result = await reconcileRepo(client, repo, {
+    apply: true, mergeGreenPulls: true, now: NOW,
+  });
+  assert.ok(!writes.some(w => w.method === "PUT" && w.path.includes("/merge")));
+  assert.ok(result.debts.some(d => d.id.includes("checks-unavailable")));
+});
+
+test("unconfirmed merge response must not imply accepted Work or close its issue", async () => {
+  for (const mismatch of ["missing-ack", "missing-readback"]) {
+    const routes = world();
+    routes["LIST /repos/o/r/pulls?state=closed&sort=updated&direction=desc"] = [];
+    routes["GET /repos/o/r/pulls/5"] = { ...routes["GET /repos/o/r/pulls/5"], body: "Fixes #42" };
+    if (mismatch === "missing-ack")
+      routes["MERGE /repos/o/r/pulls/5/merge"] = { merged: false };
+    else
+      routes["MERGED READBACK /repos/o/r/pulls/5"] = false;
+    const { client, writes } = fake(routes);
+    const result = await reconcileRepo(client, repo, {
+      apply: true, mergeGreenPulls: true, closeIssues: true, now: NOW,
+    });
+    assert.ok(writes.some(w => w.method === "PUT" && w.path.includes("/merge")));
+    assert.ok(!writes.some(w => w.path.includes("/issues/42")));
+    assert.ok(result.debts.some(d => d.id.includes("merge-receipt-unverified")));
+    assert.equal(result.actions.find(a => a.kind === "merge-pull-request").applied, false);
+  }
+});
+
+test("an open fork PR with an identical short head name does not pin local contained history", async () => {
+  const routes = world();
+  routes["LIST /repos/o/r/pulls?state=open"][1].head = {
+    ref: "done", repo: { full_name: "someone-else/r" }, sha: "r1",
+  };
+  const { client, writes } = fake(routes);
+  const result = await reconcileRepo(client, repo, { apply: true, now: NOW });
+  assert.ok(result.actions.some(a => a.kind === "delete-branch" && a.target === "done" && a.applied));
+  assert.ok(writes.some(w => w.method === "DELETE" && w.path.endsWith("/heads/done")));
 });
