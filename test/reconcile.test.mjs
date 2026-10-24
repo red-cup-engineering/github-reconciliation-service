@@ -14,6 +14,9 @@ test("checksState reads check runs and the combined status", () => {
   assert.equal(checksState({ checkRuns: [run("completed", "success"), run("completed", "skipped")], status: null }), "passing");
   assert.equal(checksState({ checkRuns: [run("completed", "success"), run("in_progress")], status: null }), "pending");
   assert.equal(checksState({ checkRuns: [run("completed", "failure")], status: null }), "failing");
+  assert.equal(checksState({ checkRuns: [run("completed", "skipped")], status:null }), "inconclusive");
+  assert.equal(checksState({ checkRuns: [run("completed", "neutral")], status:null }), "inconclusive");
+  assert.equal(checksState({ checkRuns: [run("completed", "skipped"),run("completed","neutral")], status:null }), "inconclusive");
   assert.equal(checksState({ checkRuns: [], status: { total_count: 0, state: "pending" } }), "none");
   assert.equal(checksState({ checkRuns: [], status: { total_count: 1, state: "failure" } }), "failing");
 });
@@ -29,13 +32,16 @@ test("branchClass deletes only what the default branch already holds", () => {
   assert.equal(branchClass({ ...base, branch: branch("rel"), isProtected: true, ahead_by: 0 }), "protected");
 });
 
-test("pullClass orders its tests: draft, unknown, superseded, conflict, checks, cleanliness", () => {
+test("pullClass prioritizes real source refusals over ambiguous same-file names", () => {
   const pull = (over = {}) => ({ base: { ref: "main" }, draft: false, mergeable: true, mergeable_state: "clean", ...over });
   const args = (over = {}, extra = {}) => ({ pull: pull(over), checks: "passing", files: ["a"], changedOnBase: new Set(), defaultBranch: "main", ...extra });
   assert.equal(pullClass(args()), "green-and-mergeable");
   assert.equal(pullClass(args({ draft: true })), "draft");
   assert.equal(pullClass(args({ mergeable: null })), "mergeability-unknown");
-  assert.equal(pullClass(args({}, { changedOnBase: new Set(["a", "b"]) })), "superseded-by-changes-on-default");
+  assert.equal(pullClass(args({}, { changedOnBase: new Set(["a", "b"]) })), "same-files-changed-on-default");
+  assert.equal(pullClass(args({ mergeable:false,mergeable_state:"dirty" }, { changedOnBase:new Set(["a"]) })), "conflicting");
+  assert.equal(pullClass(args({}, { checks:"failing",changedOnBase:new Set(["a"]) })), "checks-failing");
+  assert.equal(pullClass(args({}, { checks:"inconclusive",changedOnBase:new Set(["a"]) })), "checks-inconclusive");
   assert.equal(pullClass(args({ mergeable: false, mergeable_state: "dirty" })), "conflicting");
   assert.equal(pullClass(args({}, { checks: "failing" })), "checks-failing");
   assert.equal(pullClass(args({}, { checks: "none" })), "no-checks");
@@ -456,4 +462,25 @@ test("duplicate or unversioned original issue source must refuse, never invent a
      /issue identity, revision or source coverage is incomplete/u);
    assert.deepEqual(writes,[]);
  }
+});
+
+test("skipped-only original check runs never produce an accepted PR source candidate",async()=>{
+ const routes=world();
+ routes["LIST /repos/o/r/commits/g1/check-runs"]=[{status:"completed",conclusion:"skipped"}];
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ assert.deepEqual(writes,[]);
+ assert.equal(result.actions.some(a=>a.kind==="receive-pull-source"&&a.target===5),false);
+ assert.ok(result.debts.some(row=>row.id.includes("checks-inconclusive")));
+});
+test("GitHub base comparison at 300 files remains incomplete rather than a green review",async()=>{
+ const routes=world();
+ routes["GET /repos/o/r/compare/b...main"]={
+  files:Array.from({length:300},(_,n)=>({filename:"path-"+n+".mjs"}))
+ };
+ const {client,writes}=fake(routes);
+ const result=await reconcileRepo(client,repo,{now:NOW});
+ assert.deepEqual(writes,[]);
+ assert.equal(result.actions.some(a=>a.kind==="receive-pull-source"&&a.target===5),false);
+ assert.ok(result.debts.some(row=>row.id.includes("base-difference-incomplete")));
 });

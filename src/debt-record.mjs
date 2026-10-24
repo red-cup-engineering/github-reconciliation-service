@@ -10,7 +10,9 @@ const REPAIR = {
   "merge-receipt-unverified": "The merge request has an unknown or contradictory provider result. Read back the exact PR head, merged state and merge commit SHA before deciding whether a retry, issue closure or independent receiving is lawful.",
   "archive-ref-source-not-received": "A tag named archive retains an original Git object and possibly unfinished Work. Receive that source, its actual issue and intended consumer through Git Engineering and Coesite before considering any source-ref retirement.",
   "issue-closure-readback-unverified": "The source issue closure was requested but the original GitHub provider readback was incomplete or contradictory. Read its exact current issue identity/state before retrying; GitHub closure alone is not original Work acceptance.",
-  "superseded-by-changes-on-default": "Every file this pull request changes was changed on the default branch afterwards; confirm it is superseded and close it with a reason, or rebase.",
+  "same-files-changed-on-default": "Overlapping source file names are not evidence of supersession. Compare original requirements, actual code and the ordinary consumer before a source decision.",
+  "checks-inconclusive": "Skipped or neutral checks do not demonstrate successful native tests; obtain actual executed checks and original consumer qualification.",
+  "base-difference-incomplete": "The provider base-compare file list is incomplete. Recover the exact changed source before accepting nonconflict or calling work superseded.",
   "mergeability-unknown": "GitHub has not computed mergeability; the next pulse reads it again.",
   "not-against-default": "The pull request targets a branch other than the default; retarget or close it.",
 };

@@ -4,7 +4,10 @@
  */
 
 const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"]);
-const PASSED = new Set(["success", "skipped", "neutral"]);
+// GitHub may accept skipped/neutral for branch protection, but neither
+// establishes an executed successful source test.
+const PASSED = new Set(["success"]);
+const NO_POSITIVE_RESULT = new Set(["skipped", "neutral"]);
 
 /**
  * A branch is contained in the default branch when it has no commit the default branch lacks:
@@ -26,11 +29,15 @@ export const DELETABLE_BRANCH_CLASSES = new Set();
 
 /** Check state of one head commit from its check runs and combined status. */
 export function checksState({ checkRuns, status }) {
-  const states = checkRuns.map((run) => (run.status !== "completed" ? "pending" : FAILED.has(run.conclusion) ? "failing" : PASSED.has(run.conclusion) ? "passing" : "failing"));
+  const states = checkRuns.map(run=>run.status!=="completed"?"pending":
+    FAILED.has(run.conclusion)?"failing":
+    PASSED.has(run.conclusion)?"passing":
+    NO_POSITIVE_RESULT.has(run.conclusion)?"inconclusive":"failing");
   if (status && status.total_count > 0) states.push(status.state === "success" ? "passing" : status.state === "pending" ? "pending" : "failing");
   if (states.includes("failing")) return "failing";
   if (states.includes("pending")) return "pending";
-  return states.length ? "passing" : "none";
+  if(states.includes("passing"))return "passing";
+  return states.length?"inconclusive":"none";
 }
 
 /**
@@ -41,13 +48,16 @@ export function pullClass({ pull, checks, files, changedOnBase, defaultBranch })
   if (pull.base.ref !== defaultBranch) return "not-against-default";
   if (pull.draft) return "draft";
   if (pull.mergeable === null || pull.mergeable === undefined) return "mergeability-unknown";
-  if (files.length > 0 && files.every((file) => changedOnBase.has(file))) return "superseded-by-changes-on-default";
   if (pull.mergeable === false || pull.mergeable_state === "dirty") return "conflicting";
   if (checks === "unavailable") return "checks-unavailable";
   if (checks === "failing") return "checks-failing";
   if (checks === "pending") return "checks-pending";
   if (checks === "none") return "no-checks";
+  if (checks === "inconclusive") return "checks-inconclusive";
   if (pull.mergeable_state !== "clean") return `not-clean-${pull.mergeable_state}`;
+  // Changed file names overlapping is NOT proof required behavior is superseded.
+  if (files.length>0 && files.every(file=>changedOnBase.has(file)))
+    return "same-files-changed-on-default";
   return "green-and-mergeable";
 }
 

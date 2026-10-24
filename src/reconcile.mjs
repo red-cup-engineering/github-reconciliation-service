@@ -84,7 +84,12 @@ export async function reconcileRepo(client, repo, options = {}) {
     const pull = await client.request("GET", `/repos/${repo}/pulls/${summary.number}`);
     const files = (await client.paginate(`/repos/${repo}/pulls/${pull.number}/files`)).map((file) => file.filename);
     const compare = await client.request("GET", `/repos/${repo}/compare/${pull.base.sha}...${path(defaultBranch)}`);
-    const changedOnBase = new Set((compare.files ?? []).map((file) => file.filename));
+    // GitHub caps compare files at 300. Do not treat an incomplete base
+    // difference as an observed safe or superseded source review.
+    const comparisonComplete = Array.isArray(compare?.files)
+      && compare.files.length<300 && compare.too_large!==true;
+    const changedOnBase = new Set(comparisonComplete
+      ?compare.files.map(file=>file.filename):[]);
     const [runsRead, statusRead] = await Promise.allSettled([
       client.paginate(`/repos/${repo}/commits/${pull.head.sha}/check-runs`),
       client.request("GET", `/repos/${repo}/commits/${pull.head.sha}/status`),
@@ -96,7 +101,9 @@ export async function reconcileRepo(client, repo, options = {}) {
       typeof statusRead.value?.state === "string"
       ? checksState({ checkRuns: runsRead.value, status: statusRead.value })
       : "unavailable";
-    const cls = pullClass({ pull, checks, files, changedOnBase, defaultBranch });
+    const provisional = pullClass({ pull, checks, files, changedOnBase, defaultBranch });
+    const cls=!comparisonComplete&&provisional==="green-and-mergeable"
+      ?"base-difference-incomplete":provisional;
     if (cls === "green-and-mergeable" && qualifiedPullSources < maxMerges) {
       qualifiedPullSources += 1;
       const action = { kind: "receive-pull-source", repo, target: pull.number, class: cls,
@@ -110,6 +117,10 @@ export async function reconcileRepo(client, repo, options = {}) {
       debts.push(debtRecord({ repo, kind: "pull-request", id: pull.number, cls, title: pull.title, url: pull.html_url, now,
         ...(cls === "checks-unavailable"
           ? { evidence: "GitHub check runs or commit statuses could not be fully observed; no green merge qualification." }
+          : cls === "base-difference-incomplete"
+          ? { evidence: "GitHub returned an incomplete original base difference; neither nonconflict nor supersession was established." }
+          : cls === "same-files-changed-on-default"
+          ? { evidence: "Only filenames overlap; the original behavior and ordinary consumer are not yet reconciled." }
           : {}) }));
     }
   }
