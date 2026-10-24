@@ -1,13 +1,16 @@
 [Unit]
-Description=Reconcile open pull requests, branches and issues of the 561 Group organizations
+Description=Observe unreceived GitHub sources of the 561 Group organizations without effects
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 DynamicUser=yes
-StateDirectory=github-reconcile
 LoadCredentialEncrypted=github-token:/etc/credstore.encrypted/github-reconcile-token
-ExecStart=/opt/github-reconcile/current/bin/github-reconcile.mjs --apply \
-  --org red-cup-engineering --org 561-group --org causeway-services --org lenticule-science --org coesite-operations \
-  --register %S/github-reconcile/system-debt-records
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=
+ExecStart=/opt/github-reconcile/current/bin/github-reconcile.mjs \
+  --org red-cup-engineering --org 561-group --org causeway-services --org lenticule-science --org coesite-operations
