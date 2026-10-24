@@ -401,7 +401,7 @@ test("unavailable GitHub check-runs cannot be masked by passing commit statuses"
     mergeGreenPulls: true, now: NOW,
   });
   assert.deepEqual(writes,[],"an unavailable check source cannot cause any effect");
-  assert.ok(result.debts.some(d => d.id.includes("checks-unavailable")));
+  assert.equal(result.pullSourceCandidates.find(p=>p.pullRequestNumber===5).technicalClassification,"checks-unavailable");
   assert.equal(result.actions.some(a=>a.kind==="receive-pull-source"&&a.target===5),false);
 });
 
@@ -517,7 +517,7 @@ test("skipped-only original check runs never produce an accepted PR source candi
  const result=await reconcileRepo(client,repo,{now:NOW});
  assert.deepEqual(writes,[]);
  assert.equal(result.actions.some(a=>a.kind==="receive-pull-source"&&a.target===5),false);
- assert.ok(result.debts.some(row=>row.id.includes("checks-inconclusive")));
+ assert.equal(result.pullSourceCandidates.find(p=>p.pullRequestNumber===5).technicalClassification,"checks-inconclusive");
 });
 test("GitHub base comparison at 300 files remains incomplete rather than a green review",async()=>{
  const routes=world();
@@ -528,7 +528,7 @@ test("GitHub base comparison at 300 files remains incomplete rather than a green
  const result=await reconcileRepo(client,repo,{now:NOW});
  assert.deepEqual(writes,[]);
  assert.equal(result.actions.some(a=>a.kind==="receive-pull-source"&&a.target===5),false);
- assert.ok(result.debts.some(row=>row.id.includes("base-difference-incomplete")));
+ assert.equal(result.pullSourceCandidates.find(p=>p.pullRequestNumber===5).technicalClassification,"base-difference-incomplete");
 });
 
 test("draft, nondefault-target and unread CI PRs remain typed original source",async()=>{

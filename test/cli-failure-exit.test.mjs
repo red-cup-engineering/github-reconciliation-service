@@ -43,6 +43,9 @@ globalThis.fetch = async (url, init) => {
     assert.equal(complete.error, undefined);
     const success = JSON.parse(complete.stdout);
     assert.equal(success.repos, 1);
+    assert.equal(success.recordKind,"github.reconciliation-source-report/v1");
+    assert.equal(Object.hasOwn(success,"debtRecords"),false);
+    assert.equal(Object.hasOwn(success,"debts"),false);
     assert.equal(success.repositoriesObserved, 1);
     assert.equal(success.repositoriesFailed, 0);
     assert.deepEqual(success.errors, []);
@@ -62,6 +65,8 @@ globalThis.fetch = async (url, init) => {
     assert.equal(mixed.error, undefined);
     const report = JSON.parse(mixed.stdout);
     assert.equal(report.repos, 2);
+    assert.equal(report.recordKind,"github.reconciliation-source-report/v1");
+    assert.equal(Object.hasOwn(report,"debtRecords"),false);
     assert.equal(report.repositoriesObserved, 1);
     assert.equal(report.repositoriesFailed, 1);
     assert.equal(report.errors.length, 1);
@@ -94,4 +99,19 @@ test("--register refuses before credential access and never creates orphan debt 
  assert.notEqual(attempt.status,0);
  assert.match(attempt.stderr,/--register refused/u);
  assert.doesNotMatch(attempt.stderr,/no token:/u);
+});
+
+
+test("obsolete debt-age and effect knobs refuse before token acquisition and produce no unconsumed JSON",()=>{
+  for(const [flag,value] of [
+    ["--min-age-days","5"],["--max-merges","0"],["--merge-method","squash"],
+    ["--merge-green-pulls",null],["--close-issues",null],
+  ]){
+    const result=spawnSync(process.execPath,[cli,"--repo","o/r",flag,...(value===null?[]:[value])],{
+      encoding:"utf8",env:{...process.env,GITHUB_TOKEN:"",CREDENTIALS_DIRECTORY:""}
+    });
+    assert.notEqual(result.status,0,flag);
+    assert.match(result.stderr,/obsolete effect\/debt selector/u,flag);
+    assert.doesNotMatch(result.stderr,/no token:/u);
+  }
 });

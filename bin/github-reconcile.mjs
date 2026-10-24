@@ -1,23 +1,28 @@
 #!/usr/bin/env node
 /**
- * github-reconcile [--org NAME]... [--repo OWNER/NAME]... [--apply] [--register DIR]
- *                  [--merge-green-pulls] [--receive-equivalent] [--max-equivalents N]
- *                  [--merge-method squash|merge|rebase] [--close-issues]
- *                  [--max-merges N] [--min-age-days N]
+ * github-reconcile [--org NAME]... [--repo OWNER/NAME]...
+ *                  [--receive-equivalent] [--max-equivalents N]
  *
  * Reads the token from $GITHUB_TOKEN, or from the systemd credential `github-token`
- * ($CREDENTIALS_DIRECTORY). Without --apply it only reports what it would do.
+ * ($CREDENTIALS_DIRECTORY). This entry is always a read-only source observer.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createClient } from "../src/github-client.mjs";
 import { listRepos, reconcileRepo, summarize } from "../src/reconcile.mjs";
+import { admitGitHubReconciliationSource } from "../src/source-report.mjs";
 
 const argv = process.argv.slice(2);
 if(argv.includes("--apply"))
   throw new TypeError("--apply refused: GitHub source observation alone cannot merge a PR, close Work or retire Git refs; use the original native receiving operations");
 if(argv.includes("--register"))
-  throw new TypeError("--register refused: write-only debt JSON has no qualified original reader; use the original machine-readable CLI result");
+  throw new TypeError("--register refused: the historical write-only debt JSON had no reader; use typed original GitHub source records");
+const legacyFlags=new Set(["--min-age-days","--merge-green-pulls","--close-issues","--max-merges","--merge-method"]);
+for(const flag of argv) {
+  if(legacyFlags.has(flag))throw new TypeError(flag+" refused: obsolete effect/debt selector; original read-only source has no such action");
+  if(flag.startsWith("--") && !["--repo","--org","--receive-equivalent","--max-equivalents"].includes(flag))
+    throw new TypeError("unknown GitHub source flag "+flag);
+}
 const values = (flag) => argv.flatMap((arg,i) => {
   if(arg !== flag)return [];
   const value=argv[i+1];
@@ -38,33 +43,42 @@ const safeInt = (text,flag) => {
   if(!Number.isSafeInteger(n)||n<0)throw new TypeError(flag+" must be a nonnegative integer");
   return n;
 };
-const options = { apply:argv.includes("--apply"), mergeGreenPulls:argv.includes("--merge-green-pulls"),
+const options = {
   receiveEquivalent:argv.includes("--receive-equivalent"),
   maxEquivalentMerges:safeInt(one("--max-equivalents",8),"--max-equivalents"),
-  closeIssues:argv.includes("--close-issues"),
-  mergeMethod:one("--merge-method","squash"),
-  maxMerges:safeInt(one("--max-merges",25),"--max-merges"),
-  minAgeDays:safeInt(one("--min-age-days",2),"--min-age-days") };
-if(!["merge","squash","rebase"].includes(options.mergeMethod))
-  throw new TypeError("--merge-method must be merge, squash or rebase");
-const results = [];
+};
+// Both the source producer and its original Computer Engineering consumer
+// admit this SAME transient typed result. A failed repository remains an error
+// in the whole-estate observation, never an invented empty population.
+const reportOf = (readings, errors) => ({
+  recordKind:"github.reconciliation-source-report/v1",
+  applied:false,...summarize(readings),
+  repositoriesObserved:readings.length-errors.length,
+  repositoriesFailed:errors.length,
+  errors,
+  actions:readings.flatMap(r=>r.actions),
+  archiveRefSources:readings.flatMap(r=>r.sourceObservations??[]),
+  branchSourceCandidates:readings.flatMap(r=>r.sourceCandidates??[]),
+  pullSourceCandidates:readings.flatMap(r=>r.pullSourceCandidates??[]),
+  originalIssueSources:readings.flatMap(r=>r.originalIssueSources??[]),
+  archiveRefCoverage:errors.length?"incomplete":"complete-for-observed-repositories",
+  sourceCutCoverage:errors.length?"incomplete":"matching-open-github-source-cuts",
+});
+const results=[];
 for (const repo of repos) {
-  try { results.push(await reconcileRepo(client, repo, options)); }
-  catch (error) { console.error(`${repo}: ${error.message}`); results.push({ repo, actions: [], debts: [], error: error.message }); }
+  try {
+    const observed=await reconcileRepo(client,repo,options);
+    if(observed.sourceCutCoverage!=="matching-open-github-source-cuts")
+      throw new TypeError("original GitHub source cut incomplete");
+    admitGitHubReconciliationSource(reportOf([observed],[]),{repository:repo});
+    results.push(observed);
+  } catch (error) {
+    console.error(`${repo}: ${error.message}`);
+    results.push({repo,actions:[],error:error.message});
+  }
 }
-const errors = results.filter((r) => r.error).map((r) => ({ repo: r.repo, error: r.error }));
-console.log(JSON.stringify({ applied: false, ...summarize(results),
-  repositoriesObserved: results.length - errors.length, repositoriesFailed: errors.length,
-  errors, actions: results.flatMap((r) => r.actions),
-  // These are first-class machine-readable source observations consumed from
-  // the EXISTING CLI output, not files in another "archive" inventory.
-  archiveRefSources: results.flatMap(r=>r.sourceObservations ?? []),
-  branchSourceCandidates: results.flatMap(r=>r.sourceCandidates ?? []),
-  pullSourceCandidates: results.flatMap(r=>r.pullSourceCandidates ?? []),
-  originalIssueSources: results.flatMap(r=>r.originalIssueSources ?? []),
-  archiveRefCoverage: errors.length ? "incomplete" : "complete-for-observed-repositories",
-  sourceCutCoverage: errors.length ? "incomplete" : "matching-open-github-source-cuts",
-}, null, 2));
+const errors=results.filter(r=>r.error).map(r=>({repo:r.repo,error:r.error}));
+console.log(JSON.stringify(reportOf(results,errors),null,2));
 // A partially observed repository estate is not a successful reconciliation.
 // Keep the machine-readable receipt on stdout, but fail the invoking job.
 if (errors.length) process.exitCode = 1;
