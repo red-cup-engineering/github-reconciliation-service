@@ -60,6 +60,7 @@ console.log(JSON.stringify({ applied: false, ...summarize(results),
   // the EXISTING CLI output, not files in another "archive" inventory.
   archiveRefSources: results.flatMap(r=>r.sourceObservations ?? []),
   branchSourceCandidates: results.flatMap(r=>r.sourceCandidates ?? []),
+  pullSourceCandidates: results.flatMap(r=>r.pullSourceCandidates ?? []),
   originalIssueSources: results.flatMap(r=>r.originalIssueSources ?? []),
   archiveRefCoverage: errors.length ? "incomplete" : "complete-for-observed-repositories",
 }, null, 2));
