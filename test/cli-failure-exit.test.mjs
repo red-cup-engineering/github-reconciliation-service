@@ -18,9 +18,10 @@ test("repository read failure produces nonzero process status and truthful parti
 globalThis.fetch = async (url, init) => {
   const path = new URL(url).pathname;
   const routes = {
-    "/repos/o/r": { default_branch: "main" },
-    "/repos/o/r/branches": [],
-    "/repos/o/r/pulls": []
+    "/repos/o/r": { id: 12345, default_branch: "main" },
+    "/repos/o/r/branches": [{name:"main",protected:false,commit:{sha:"a".repeat(40)}}],
+    "/repos/o/r/pulls": [],
+    "/repos/o/r/git/matching-refs/tags/archive/": []
   };
   const allowed = init.method === "GET" && Object.hasOwn(routes, path);
   return {
@@ -43,6 +44,9 @@ globalThis.fetch = async (url, init) => {
     assert.equal(success.repositoriesObserved, 1);
     assert.equal(success.repositoriesFailed, 0);
     assert.deepEqual(success.errors, []);
+    assert.equal(success.archiveRefCoverage,"complete-for-observed-repositories");
+    assert.deepEqual(success.archiveRefSources,[]);
+    assert.equal(success.archiveTagSourcesObserved,0);
 
     const mixed = invoke("o/r", "x/y");
     assert.equal(mixed.status, 1, mixed.stderr);
@@ -54,6 +58,8 @@ globalThis.fetch = async (url, init) => {
     assert.equal(report.errors.length, 1);
     assert.equal(report.errors[0].repo, "x/y");
     assert.equal(report.applied, false);
+    assert.equal(report.archiveRefCoverage,"incomplete",
+      "an unreadable repository must not imply a complete archive-tag census");
     assert.deepEqual(report.actions, []);
     assert.match(mixed.stderr, /x\/y:.*503/u);
   } finally {
