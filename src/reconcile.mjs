@@ -1,6 +1,7 @@
 import { branchClass, checksState, DELETABLE_BRANCH_CLASSES, issueClosers, pullClass } from "./classify.mjs";
 import { debtRecord } from "./debt-record.mjs";
 import { receiveEquivalentBranch } from "./receive-equivalent.mjs";
+import { observeArchiveRefSources } from "./archive-ref-observation.mjs";
 
 const path = (value) => value.split("/").map(encodeURIComponent).join("/");
 const DAY = 86_400_000;
@@ -30,6 +31,8 @@ export async function reconcileRepo(client, repo, options = {}) {
 
   const info = await client.request("GET", `/repos/${repo}`);
   const defaultBranch = info.default_branch;
+  if (!Number.isSafeInteger(info.id) || info.id <= 0 || !defaultBranch)
+    throw new TypeError("source owner repository ID and default branch not observed");
   const [branches, openPulls, closedPulls] = await Promise.all([
     client.paginate(`/repos/${repo}/branches`),
     client.paginate(`/repos/${repo}/pulls?state=open`),
@@ -102,6 +105,25 @@ export async function reconcileRepo(client, repo, options = {}) {
       pull.head.repo.full_name.toLowerCase() === repo.toLowerCase())
     .map((pull) => pull.head?.ref));
   const originalDefaultHead=branches.find(branch=>branch.name===defaultBranch)?.commit?.sha;
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(originalDefaultHead ?? ""))
+    throw new TypeError("observed default source is required before tag or branch action");
+  // The original Git Services source observer owns actual Git semantics;
+  // this GitHub REST adapter only preserves true ref/tag object identity.
+  // An archive-named tag is NOT an archive receipt or supersession decision.
+  const sourceObservations = await observeArchiveRefSources(client,{
+    repository:repo,repositoryId:info.id,observedBaseCommitId:originalDefaultHead,
+  });
+  const tagCommitHeads = new Set(sourceObservations.map(x=>x.peeledCommitId).filter(Boolean));
+  for(const observed of sourceObservations){
+    note("receive-archive-tag-source",observed.refName,{
+      refObjectId:observed.gitObjectId,
+      peeledCommitId:observed.peeledCommitId,
+      technicalRelation:observed.technicalRelation,
+      sourceRecordKind:observed.recordKind,
+      independentConsumerReceivingRequired:true,
+      nextOwner:observed.nextOwner,
+    });
+  }
   let equivalentReceipts=0;
   for (const branch of branches) {
     if (branch.name === defaultBranch) continue;
@@ -109,6 +131,18 @@ export async function reconcileRepo(client, repo, options = {}) {
     const cls = branchClass({ branch, defaultBranch, ahead_by: compare?.ahead_by ?? null, openPullHeads, isProtected: branch.protected });
     if (DELETABLE_BRANCH_CLASSES.has(cls)) {
       const action = { kind: "delete-branch", repo, target: branch.name, class: cls, applied: false };
+      // A retained archive-named tag referencing the same commit is evidence
+      // of a still-open original source and issue/consumer custody question.
+      // Even a contained commit is NOT consent to retire the branch's name.
+      if(tagCommitHeads.has(branch.commit?.sha)){
+        action.reason="archive-tag-source-awaits-original-work-and-consumer-receiving";
+        action.refRetirementAllowed=false;
+        debts.push(debtRecord({repo,kind:"branch",id:branch.name,
+          cls:"archive-ref-source-not-received",now,
+          evidence:"Same commit remains under an archive-named tag; source, original issue and installed consumer acceptance have not been independently received."}));
+        actions.push(action);
+        continue;
+      }
       if (apply) {
         let head, branchNow, latest, openNow;
         try {
@@ -181,14 +215,31 @@ export async function reconcileRepo(client, repo, options = {}) {
       if (!pull || issue.pull_request) continue;
       const action = { kind: "close-issue", repo, target: issue.number, class: "fixed-by-merged-pull-request", applied: false, by: pull.html_url };
       if (apply) {
-        await client.request("POST", `/repos/${repo}/issues/${issue.number}/comments`, { body: `Closed because ${pull.html_url} merged and states that it fixes this issue.` });
-        await client.request("PATCH", `/repos/${repo}/issues/${issue.number}`, { state: "closed", state_reason: "completed" });
-        action.applied = true;
+        // A completed HTTP request is not a provider-observed issue state.
+        // Retain an unconfirmed closure as debt; never repeat a write blindly.
+        try{
+          await client.request("POST", `/repos/${repo}/issues/${issue.number}/comments`,
+            { body: `Closed because ${pull.html_url} merged and states that it fixes this issue.` });
+          await client.request("PATCH", `/repos/${repo}/issues/${issue.number}`,
+            { state: "closed", state_reason: "completed" });
+          const readback=await client.request("GET",`/repos/${repo}/issues/${issue.number}`);
+          if(readback?.number!==issue.number || readback?.state!=="closed" ||
+             readback?.state_reason!=="completed" || Boolean(readback?.pull_request))
+            throw new TypeError("GitHub issue closure readback was not independently received");
+          action.applied=true;
+          action.providerIssueState="closed";
+          action.originalWorkReceived=false; // GitHub issue status does not grant original Work closure.
+        }catch(error){
+          action.reason="issue-closure-readback-unverified";
+          debts.push(debtRecord({repo,kind:"issue",id:issue.number,
+            cls:"issue-closure-readback-unverified",now,
+            evidence:"GitHub issue closure attempted but the exact provider state is unknown or contradicted. Independently reconcile before retry."}));
+        }
       }
       actions.push(action);
     }
   }
-  return { repo, actions, debts };
+  return { repo, actions, debts, sourceObservations };
 }
 
 export function summarize(results) {
@@ -205,6 +256,9 @@ export function summarize(results) {
     pullRequestsMergeable: count("merge-pull-request").length,
     issuesClosed: count("close-issue").filter((action) => action.applied).length,
     issuesClosable: count("close-issue").length,
+    archiveTagSourcesObserved: results.reduce((total,result)=>total+(result.sourceObservations?.length ?? 0),0),
+    archiveTagSourcesAwaitingReceiving: results.reduce((total,result)=>total+(result.sourceObservations?.filter(x=>x.independentReceivingRequired).length ?? 0),0),
+    branchesHeldByArchiveSource: count("delete-branch").filter(x=>x.refRetirementAllowed===false).length,
     debtRecords: results.reduce((total, result) => total + result.debts.length, 0),
   };
 }
