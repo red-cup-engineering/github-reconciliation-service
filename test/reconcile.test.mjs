@@ -297,6 +297,8 @@ test("legacy merge flags without Work admission remain source-only",async()=>{
  const result=await reconcileRepo(client,repo,{maxMerges:0,mergeGreenPulls:true,now:NOW});
  assert.deepEqual(writes,[]);
  assert.equal(summarize([result]).pullRequestsMerged,0);
+ assert.equal(summarize([result]).pullRequestsMergeable,1,
+   "historical zero merge limit must not censor source-only PR reviews");
  assert.ok(result.actions.some(a=>a.kind==="receive-issue-outcome"));
 });
 
