@@ -1,10 +1,8 @@
 import { branchClass, checksState, SOURCE_CONTAINMENT_CLASSES, issueClosers, pullClass } from "./classify.mjs";
-import { debtRecord } from "./debt-record.mjs";
 import { assessEquivalentBranchSource } from "./receive-equivalent.mjs";
 import { observeArchiveRefSources } from "./archive-ref-observation.mjs";
 
 const path = (value) => value.split("/").map(encodeURIComponent).join("/");
-const DAY = 86_400_000;
 
 /** Compare complete provider source cuts, not local guesses of accepted Work.
  * GitHub offers no atomic snapshot across these REST collections: before/after
@@ -72,18 +70,16 @@ export async function listRepos(client, orgs) {
  * Work- and consumer-received integration and retirement. Nothing is archived.
  */
 export async function reconcileRepo(client, repo, options = {}) {
-  const { apply = false, mergeGreenPulls = false, receiveEquivalent = false, maxEquivalentMerges = 8, closeIssues = false, mergeMethod = "squash", maxMerges = 25, minAgeDays = 2, now = new Date().toISOString() } = options;
+  const { apply = false, receiveEquivalent = false, maxEquivalentMerges = 8 } = options;
   // This public reader has no authenticated original Work/independent consumer
   // disposition. A parent workflow's GITHUB_TOKEN or generic --apply flag does
   // not grant ref retirement, issue closure or PR integration authority.
   if (apply) throw new TypeError("Original Work/consumer receiving required: use the native revision-bound GitHub Engineering integrator, not this source observer");
   const actions = [];
-  const debts = [];
   const sourceCandidates = [];
   const pullSourceCandidates = [];
   const originalIssueSources = [];
   const note = (kind, target, extra = {}) => actions.push({ kind, repo, target, applied: false, ...extra });
-  const old = (iso) => Date.parse(now) - Date.parse(iso) >= minAgeDays * DAY;
 
   const info = await client.request("GET", `/repos/${repo}`);
   const defaultBranch = info.default_branch;
@@ -207,15 +203,6 @@ export async function reconcileRepo(client, repo, options = {}) {
         mergeAuthority:"not-granted-by-observer" };
       // An assessed pull request does not author or merge its source.
       actions.push(action);
-    } else if (cls !== "draft" && cls !== "mergeability-unknown" && old(pull.updated_at)) {
-      debts.push(debtRecord({ repo, kind: "pull-request", id: pull.number, cls, title: pull.title, url: pull.html_url, now,
-        ...(cls === "checks-unavailable"
-          ? { evidence: "GitHub check runs or commit statuses could not be fully observed; no green merge qualification." }
-          : cls === "base-difference-incomplete"
-          ? { evidence: "GitHub returned an incomplete original base difference; neither nonconflict nor supersession was established." }
-          : cls === "same-files-changed-on-default"
-          ? { evidence: "Only filenames overlap; the original behavior and ordinary consumer are not yet reconciled." }
-          : {}) }));
     }
   }
 
@@ -307,9 +294,6 @@ export async function reconcileRepo(client, repo, options = {}) {
       if(tagCommitHeads.has(branch.commit?.sha)){
         action.reason="archive-tag-source-awaits-original-work-and-consumer-receiving";
         action.refRetirementAllowed=false;
-        debts.push(debtRecord({repo,kind:"branch",id:branch.name,
-          cls:"archive-ref-source-not-received",now,
-          evidence:"Same commit remains under an archive-named tag; source, original issue and installed consumer acceptance have not been independently received."}));
         actions.push(action);
         continue;
       }
@@ -341,9 +325,6 @@ export async function reconcileRepo(client, repo, options = {}) {
           continue;
         }
       }
-      const head = await client.request("GET", `/repos/${repo}/commits/${branch.commit.sha}`).catch(() => null);
-      const date = head?.commit?.committer?.date;
-      if (date && old(date)) debts.push(debtRecord({ repo, kind: "branch", id: branch.name, cls, evidence: `${compare?.ahead_by ?? "?"} commits not in ${defaultBranch}; last commit ${date}.`, now }));
     }
   }
 
@@ -375,7 +356,7 @@ export async function reconcileRepo(client, repo, options = {}) {
      observedPullCut(endingPulls)!==openingSourceCut.pulls ||
      observedIssueCut(endingIssues)!==openingSourceCut.issues)
     throw new TypeError("Original GitHub branches, pull requests or issues changed during source observation");
-  return { repo, actions, debts, sourceObservations,
+  return { repo, actions, sourceObservations,
     sourceCutCoverage:"matching-open-github-source-cuts",
     sourceCandidates:Object.freeze(sourceCandidates),
     pullSourceCandidates:Object.freeze(pullSourceCandidates),
@@ -401,6 +382,5 @@ export function summarize(results) {
     archiveTagSourcesAwaitingReceiving: results.reduce((total,result)=>total+(result.sourceObservations?.filter(x=>x.independentReceivingRequired).length ?? 0),0),
     branchesHeldByArchiveSource:results.reduce((n,r)=>n+(r.sourceCandidates?.filter(
       x=>x.matchingArchiveRefNames.length).length??0),0),
-    debtRecords: results.reduce((total, result) => total + result.debts.length, 0),
   };
 }
