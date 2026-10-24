@@ -63,6 +63,7 @@ console.log(JSON.stringify({ applied: false, ...summarize(results),
   pullSourceCandidates: results.flatMap(r=>r.pullSourceCandidates ?? []),
   originalIssueSources: results.flatMap(r=>r.originalIssueSources ?? []),
   archiveRefCoverage: errors.length ? "incomplete" : "complete-for-observed-repositories",
+  sourceCutCoverage: errors.length ? "incomplete" : "matching-open-github-source-cuts",
 }, null, 2));
 // A partially observed repository estate is not a successful reconciliation.
 // Keep the machine-readable receipt on stdout, but fail the invoking job.

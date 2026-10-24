@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {SOURCE_CONTAINMENT_CLASSES, DELETABLE_BRANCH_CLASSES} from "../src/classify.mjs";
 import { branchClass, checksState, issueClosers, pullClass } from "../src/classify.mjs";
-import { reconcileRepo, summarize } from "../src/reconcile.mjs";
+import { listRepos, reconcileRepo, summarize } from "../src/reconcile.mjs";
 import { createClient } from "../src/github-client.mjs";
 
 const NOW = "2026-10-15T12:00:00Z";
@@ -63,6 +63,7 @@ test("issueClosers needs a closing keyword and a number with #, in this reposito
 /** A fake GitHub keyed by "METHOD path"; records every write. */
 function fake(routes) {
   const writes = [];
+  const pagesRead = new Map();
   const merged = new Set();
   const closedIssues = new Set();
   const MERGE_SHA = "a".repeat(40);
@@ -97,7 +98,9 @@ function fake(routes) {
     async paginate(path) {
       const hit = routes[`LIST ${path}`];
       if (!hit) throw new Error(`no list ${path}`);
-      return hit;
+      const observed=pagesRead.get(path)??0;
+      pagesRead.set(path,observed+1);
+      return typeof hit==="function" ? hit(observed) : hit;
     },
   };
   return { client, writes };
@@ -502,7 +505,7 @@ test("duplicate or unversioned original issue source must refuse, never invent a
    const routes=world();routes["LIST /repos/o/r/issues?state=open"]=issues;
    const {client,writes}=fake(routes);
    await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
-     /issue identity, revision or source coverage is incomplete/u);
+     /(?:issue identity, revision or source coverage is incomplete|GitHub open issues has missing or duplicate source identity|GitHub open issue source identity not observed)/u);
    assert.deepEqual(writes,[]);
  }
 });
@@ -558,7 +561,7 @@ test("duplicate, missing or changing original pull identities and SHA witnesses 
     const routes=world();mutate(routes);
     const {client,writes}=fake(routes);
     await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
-      /pull request identity, revision or source coverage is incomplete/u);
+      /(?:pull request identity, revision or source coverage is incomplete|GitHub open pull requests has missing or duplicate source identity)/u);
     assert.deepEqual(writes,[]);
   }
 });
@@ -634,7 +637,82 @@ test("malformed GitHub PR originating repository identities refuse source census
   routes["GET /repos/o/r/pulls/5"].head.repo=headRepo;
   const {client,writes}=fake(routes);
   await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
-   /pull request identity, revision or source coverage is incomplete/u);
+   /(?:pull request identity, revision or source coverage is incomplete|GitHub open pull requests has missing or duplicate source identity)/u);
   assert.deepEqual(writes,[]);
  }
+});
+
+test("organization discovery retains archived and disabled Git repositories as unreceived sources",async()=>{
+  const scopes=[],client={async paginate(path,opts){
+    scopes.push([path,opts.maxPages]);
+    return [
+      {full_name:"o/living",archived:false,disabled:false},
+      {full_name:"o/tag-held",archived:true,disabled:false},
+      {full_name:"o/disabled",archived:false,disabled:true},
+    ];
+  }};
+  assert.deepEqual(await listRepos(client,["o"]),
+    ["o/living","o/tag-held","o/disabled"]);
+  assert.deepEqual(scopes,[["/orgs/o/repos?type=all",20]]);
+});
+
+test("an inconsistent or foreign organizational repository source refuses instead of disappearing",async()=>{
+  for(const source of [null,{}, {full_name:"other/project"}, {full_name:"not-a-repository"}]){
+    await assert.rejects(listRepos({
+      paginate:async()=>[{full_name:"o/valid"},source]
+    },["o"]),/repository inventory.*source identity/u);
+  }
+});
+
+test("original branch ref movement across a read refuses a falsely coherent source census",async()=>{
+  const routes=world(),start=routes["LIST /repos/o/r/branches"];
+  routes["LIST /repos/o/r/branches"]=index=>index===0?start:
+    start.map(row=>row.name==="done"
+      ?{...row,commit:{sha:"f".repeat(40)}}:row);
+  const {client,writes}=fake(routes);
+  await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
+    /branches, pull requests or issues changed during source observation/u);
+  assert.deepEqual(writes,[]);
+});
+
+test("original PR ref or head movement across a read refuses instead of silently losing Work",async()=>{
+  for(const altered of [
+    row=>({...row,head:{...row.head,sha:"f".repeat(40)}}),
+    row=>({...row,head:{...row.head,ref:"other-branch"}}),
+    row=>({...row,head:{...row.head,repo:{id:54321,full_name:"fork/r"}}}),
+  ]){
+    const routes=world(),start=routes["LIST /repos/o/r/pulls?state=open"];
+    routes["LIST /repos/o/r/pulls?state=open"]=index=>index===0?start:
+      start.map(row=>row.number===5?altered(row):row);
+    const {client,writes}=fake(routes);
+    await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
+      /branches, pull requests or issues changed during source observation/u);
+    assert.deepEqual(writes,[]);
+  }
+});
+
+test("original issue revisions or population changes are not presented as an unchanged Work frontier",async()=>{
+  for(const changed of [
+    rows=>rows.map(row=>row.number===40?{...row,updated_at:"2026-10-16T00:00:00Z"}:row),
+    rows=>rows.filter(row=>row.number!==42),
+    rows=>[...rows,{id:150,number:50,state:"open",updated_at:OLD}],
+  ]){
+    const routes=world(),start=routes["LIST /repos/o/r/issues?state=open"];
+    routes["LIST /repos/o/r/issues?state=open"]=index=>index===0?start:changed(start);
+    const {client,writes}=fake(routes);
+    await assert.rejects(reconcileRepo(client,repo,{now:NOW}),
+      /branches, pull requests or issues changed during source observation/u);
+    assert.deepEqual(writes,[]);
+  }
+});
+
+test("stable complete source cuts report bounded coverage without treating Work as received",async()=>{
+  const {client,writes}=fake(world());
+  const read=await reconcileRepo(client,repo,{now:NOW});
+  assert.equal(read.sourceCutCoverage,"matching-open-github-source-cuts");
+  assert.equal(read.sourceCandidates.length,4);
+  assert.equal(read.pullSourceCandidates.length,2);
+  assert.equal(read.originalIssueSources.length,3);
+  assert.equal(read.originalWorkReceiving,"not-observed");
+  assert.deepEqual(writes,[]);
 });

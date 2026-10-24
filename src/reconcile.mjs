@@ -6,12 +6,60 @@ import { observeArchiveRefSources } from "./archive-ref-observation.mjs";
 const path = (value) => value.split("/").map(encodeURIComponent).join("/");
 const DAY = 86_400_000;
 
-/** Repositories of the named organizations that are neither archived nor disabled. */
+/** Compare complete provider source cuts, not local guesses of accepted Work.
+ * GitHub offers no atomic snapshot across these REST collections: before/after
+ * identity agreement bounds net drift without promising serializability. */
+function sourceIdentityCut(rows, project, label) {
+  if (!Array.isArray(rows)) throw new TypeError("GitHub "+label+" source collection unavailable");
+  const values=rows.map(project);
+  const identities=values.map(value=>value[0]);
+  if (values.some(row=>!row.length || row[0]===null || row[0]===undefined) ||
+      new Set(identities).size!==values.length)
+    throw new TypeError("GitHub "+label+" has missing or duplicate source identity");
+  return JSON.stringify(values.sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
+}
+function observedBranchCut(rows) {
+  return sourceIdentityCut(rows,row=>{
+    if(typeof row?.name!=="string" || !row.name ||
+       typeof row.commit?.sha!=="string" || !row.commit.sha)
+      throw new TypeError("GitHub branch source identity not observed");
+    return [row.name,row.commit.sha,row.protected===true];
+  },"branches");
+}
+function observedPullCut(rows) {
+  return sourceIdentityCut(rows,row=>{
+    if(!Number.isSafeInteger(row?.number) || row.number<1 ||
+       !Number.isSafeInteger(row?.id) || row.id<1 ||
+       typeof row.head?.sha!=="string" || !row.head.sha ||
+       typeof row.head?.ref!=="string" || !row.head.ref)
+      throw new TypeError("GitHub open PR source identity not observed");
+    return [row.number,row.id,row.head.ref,row.head.sha,
+      row.head.repo?.id??null,row.head.repo?.full_name??null,
+      row.base?.ref??null,row.base?.sha??null,row.updated_at??null];
+  },"open pull requests");
+}
+function observedIssueCut(rows) {
+  return sourceIdentityCut(rows,row=>{
+    if(!Number.isSafeInteger(row?.number)||row.number<1||
+       !Number.isSafeInteger(row?.id)||row.id<1||
+       row.state!=="open"||typeof row.updated_at!=="string")
+      throw new TypeError("GitHub open issue source identity not observed");
+    return [row.number,row.id,row.state,row.updated_at,Boolean(row.pull_request)];
+  },"open issues");
+}
+
+/** All GitHub repository source identities in the named organizations.
+ * Archived/disabled are *source states*, not proof that their code was received.
+ * A later unreadable source produces an explicit repository failure, not absence. */
 export async function listRepos(client, orgs) {
   const repos = [];
   for (const org of orgs) {
     for (const repo of await client.paginate(`/orgs/${org}/repos?type=all`, { maxPages: 20 })) {
-      if (!repo.archived && !repo.disabled) repos.push(repo.full_name);
+      if(typeof repo?.full_name!=="string" ||
+         !/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/iu.test(repo.full_name) ||
+         repo.full_name.split("/")[0].toLowerCase()!==org.toLowerCase())
+        throw new TypeError("GitHub repository inventory has a missing or foreign source identity");
+      repos.push(repo.full_name);
     }
   }
   return repos;
@@ -47,6 +95,11 @@ export async function reconcileRepo(client, repo, options = {}) {
     client.paginate(`/repos/${repo}/pulls?state=closed&sort=updated&direction=desc`, { maxPages: 3 }),
     client.paginate(`/repos/${repo}/issues?state=open`),
   ]);
+  const openingSourceCut=Object.freeze({
+    branches:observedBranchCut(branches),
+    pulls:observedPullCut(openPulls),
+    issues:observedIssueCut(openIssues),
+  });
   const mergedPulls = closedPulls.filter((pull) => pull.merged_at);
   // An issue is a first-class original Work/source candidate even when no
   // merged PR uses a closing keyword. This is one already-observed GitHub
@@ -307,7 +360,23 @@ export async function reconcileRepo(client, repo, options = {}) {
       actions.push(action);
     }
   }
+  // A branch head, default, PR or original issue may move during the many
+  // immutable commit checks. Never return one synthetic coherent census
+  // assembled from incompatible provider states. This is a NET-change check,
+  // not an atomic multi-endpoint GitHub transaction or Work acceptance.
+  const [endingInfo, endingBranches, endingPulls, endingIssues]=await Promise.all([
+    client.request("GET",`/repos/${repo}`),
+    client.paginate(`/repos/${repo}/branches`),
+    client.paginate(`/repos/${repo}/pulls?state=open`),
+    client.paginate(`/repos/${repo}/issues?state=open`),
+  ]);
+  if(endingInfo?.id!==info.id || endingInfo?.default_branch!==defaultBranch ||
+     observedBranchCut(endingBranches)!==openingSourceCut.branches ||
+     observedPullCut(endingPulls)!==openingSourceCut.pulls ||
+     observedIssueCut(endingIssues)!==openingSourceCut.issues)
+    throw new TypeError("Original GitHub branches, pull requests or issues changed during source observation");
   return { repo, actions, debts, sourceObservations,
+    sourceCutCoverage:"matching-open-github-source-cuts",
     sourceCandidates:Object.freeze(sourceCandidates),
     pullSourceCandidates:Object.freeze(pullSourceCandidates),
     originalIssueSources:Object.freeze(originalIssueSources),
