@@ -21,11 +21,11 @@ const repoPath = repository => {
     throw new TypeError("exact owner/repository is required for GitHub ref receiving");
   return repository.split("/").map(encodeURIComponent).join("/");
 };
-function nameOf(tagRef) {
+function nameOf(tagRef, prefix = PREFIX) {
   if (!isObject(tagRef) || typeof tagRef.ref !== "string" ||
-      !tagRef.ref.startsWith(PREFIX) || tagRef.ref.length <= PREFIX.length ||
+      !tagRef.ref.startsWith(prefix) || tagRef.ref.length <= prefix.length ||
       /[\u0000-\u0020\u007f~^:?*\[\\]/u.test(tagRef.ref) ||
-      /\.\.|@\{|\/\/|\/$|\.$|(?:^|\/)\.|\.lock(?:\/|$)/u.test(tagRef.ref.slice(PREFIX.length)))
+      /\.\.|@\{|\/\/|\/$|\.$|(?:^|\/)\.|\.lock(?:\/|$)/u.test(tagRef.ref.slice(prefix.length)))
     throw new TypeError("GitHub returned an unsafe or non-archive-tag ref");
   return tagRef.ref;
 }
@@ -37,27 +37,33 @@ function nameOf(tagRef) {
  *
  * @returns {Promise<ReadonlyArray<Readonly<object>>>}
  */
-export async function observeArchiveRefSources(client,{repository,repositoryId,observedBaseCommitId,maxRefs=MAX_REFS}) {
+export async function observeArchiveRefSources(client,{repository,repositoryId,observedBaseCommitId,observedBaseRefName,maxRefs=MAX_REFS}) {
   const escapedRepo = repoPath(repository);
   if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0 ||
       !GIT_OID.test(observedBaseCommitId))
     throw new TypeError("source repo numeric ID and exact observed base commit required");
   if (!Number.isSafeInteger(maxRefs) || maxRefs < 1 || maxRefs > MAX_REFS)
     throw new RangeError("archive ref source limit must be 1..128");
-  const refs = await client.request("GET", `/repos/${escapedRepo}/git/matching-refs/tags/archive/`);
-  if (!Array.isArray(refs) || refs.length > maxRefs)
-    throw new RangeError("GitHub archive reference inventory incomplete or unbounded");
-  const names = new Set();
-  const sorted = [...refs].sort((a,b)=>String(a?.ref).localeCompare(String(b?.ref)));
-  // Validate the ENTIRE bounded provider page before additional network reads.
-  // Otherwise one bad later ref could make us spend an RPC on a partial census.
-  const admitted = sorted.map(ref=>{
-    const refName=nameOf(ref);
-    if(names.has(refName) || !exact(ref.object?.type,ref.object?.sha))
-      throw new TypeError("duplicate or malformed GitHub archive ref observation");
-    names.add(refName);
-    return {ref,refName};
-  });
+  // A commit ID alone does not prove the default Git ref stayed at that ID.
+  nameOf({ref:observedBaseRefName}, "refs/heads/");
+  const readInventory = async () => {
+    const refs = await client.request("GET", `/repos/${escapedRepo}/git/matching-refs/tags/archive/`);
+    if (!Array.isArray(refs) || refs.length > maxRefs)
+      throw new RangeError("GitHub archive reference inventory incomplete or unbounded");
+    const names = new Set();
+    const sorted = [...refs].sort((a,b)=>String(a?.ref).localeCompare(String(b?.ref)));
+    // Reject malformed or duplicate refs before relying on the source reading.
+    return sorted.map(ref=>{
+      const refName=nameOf(ref);
+      if(names.has(refName) || !exact(ref.object?.type,ref.object?.sha))
+        throw new TypeError("duplicate or malformed GitHub archive ref observation");
+      names.add(refName);
+      return {ref,refName};
+    });
+  };
+  const admitted = await readInventory();
+  const identity = rows => JSON.stringify(rows.map(({ref,refName})=>
+    [refName,ref.object.type,ref.object.sha]));
   const observations = [];
   for(const {ref,refName} of admitted){
     const gitObjectId = ref.object.sha;
@@ -79,6 +85,8 @@ export async function observeArchiveRefSources(client,{repository,repositoryId,o
         throw new TypeError("GitHub annotated tag readback identity mismatch");
       cursor=tag.object;
     }
+    if (cursor.type === "tag")
+      throw new RangeError("GitHub annotated tag chain exceeds bounded source coverage");
     let aheadCommitCount=null,behindCommitCount=null;
     let technicalRelation="noncommit-or-unpeeled-ref";
     if(peeledCommitId!==null){
@@ -107,5 +115,16 @@ export async function observeArchiveRefSources(client,{repository,repositoryId,o
       nextOwner:"Git Engineering native source then Coesite original Work/consumer receiving",
     }));
   }
+  // These provider endpoints cannot produce an atomic snapshot. Require at
+  // least matching before/after ref identities and the same default branch.
+  // Empty tag collections must pass these checks too, not become false zeros.
+  const latest = await readInventory();
+  if (identity(admitted) !== identity(latest))
+    throw new TypeError("GitHub archive ref identities changed during source reading");
+  const baseRef = await client.request("GET",
+    `/repos/${escapedRepo}/git/ref/${observedBaseRefName.slice("refs/".length).split("/").map(encodeURIComponent).join("/")}`);
+  if (!isObject(baseRef) || baseRef.ref !== observedBaseRefName ||
+      baseRef.object?.type !== "commit" || baseRef.object?.sha !== observedBaseCommitId)
+    throw new TypeError("GitHub default branch changed during archive source reading");
   return Object.freeze(observations);
 }

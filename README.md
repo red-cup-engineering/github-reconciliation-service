@@ -80,6 +80,13 @@ consumer receiving](https://github.com/coesite-operations/operations-services-se
 An ordinary contained branch with **no observed matching tag** follows the
 previous branch policy; this increment does not certify its Work as complete.
 
+The observer also re-reads all exact archive-ref identities and GitHub's current
+default-branch ref after comparing immutable commits. A changed ref makes
+the entire observation fail, even for an otherwise-empty tag census.
+A tag chain deeper than the bounded peeling limit also refuses rather than
+masquerading as a noncommit. These are net-change checks, **not an atomic
+snapshot guarantee** across GitHub requests.
+
 A bounded **128-ref maximum per repository**, exact provider IDs, duplicate
 ref refusal, finite annotated-tag peeling, and complete compare reads turn
 missing rights or truncated/contradictory source into failed repository
