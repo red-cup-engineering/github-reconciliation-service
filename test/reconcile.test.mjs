@@ -251,7 +251,9 @@ test("original equivalence source reader is useful but not a native content rece
  assert.equal(assessment[0].target,"squashed");
  assert.equal(assessment[0].verifiedFiles,1);
  assert.equal(assessment[0].applied,false);
- assert.equal(assessment[0].deleted,false);
+ assert.equal(assessment[0].automaticRefRetirementAllowed,false);
+ assert.equal(assessment[0].effectPermitted,false);
+ assert.equal(assessment[0].ordinaryConsumerReceiving,"not-observed");
  assert.deepEqual(writes,[]);
  assert.equal(summarize([result]).equivalentCandidates,1);
  assert.equal(summarize([result]).equivalentHistoryRetired,0);
