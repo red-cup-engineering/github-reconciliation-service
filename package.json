@@ -1,8 +1,8 @@
 {
   "name": "@red-cup-engineering/github-reconciliation-service",
-  "version": "0.1.0",
+  "version": "0.2.0-dev.0",
   "type": "module",
-  "description": "Read-only, source-qualified observations of GitHub branches, archive-tagged code, pull requests and open issues for original Work and independent consumer receiving.",
+  "description": "Typed source admission and read-only observation of GitHub branches, archive-tagged code, PRs and original issues, with no parallel debt register or effect authority.",
   "bin": {
     "github-reconcile": "./bin/github-reconcile.mjs"
   },
@@ -12,7 +12,8 @@
     "./client": "./src/github-client.mjs",
     "./equivalent-branch": "./src/equivalent-branch.mjs",
     "./receive-equivalent": "./src/receive-equivalent.mjs",
-    "./archive-ref-observation": "./src/archive-ref-observation.mjs"
+    "./archive-ref-observation": "./src/archive-ref-observation.mjs",
+    "./source-report": "./src/source-report.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
