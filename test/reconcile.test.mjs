@@ -114,6 +114,7 @@ const world = () => ({
     { name: "pr-green", protected: false, commit: { sha: "g1" } },
   ],
   "GET /repos/o/r/git/matching-refs/tags/archive/": [],
+  "GET /repos/o/r/git/ref/heads/main": {ref:"refs/heads/main",object:{type:"commit",sha:"a".repeat(40)}},
   "LIST /repos/o/r/pulls?state=open": [
     { number: 5, head: { ref: "pr-green", sha: "g1" } },
     { number: 6, head: { ref: "pr-red", sha: "r1" } },
