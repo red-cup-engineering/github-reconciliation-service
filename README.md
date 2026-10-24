@@ -31,6 +31,64 @@ authorized GitHub API origin, even if the Link came from an authenticated
 response. Any incomplete page inventory refuses rather than deleting based
 on a partial set.
 
+## Unprocessed source behind archive-named tags
+
+This is an **existing original GitHub Work and source receiver**, not a second
+archive database. Every ordinary `github-reconcile` inventory now reads
+GitHub's **actual Git refs** under `refs/tags/archive/` and, for annotated
+tags, its **original tag objects** before comparing peeled commits with the
+exact observed current base SHA. The original Git Services
+[`git.ref-source-observation/v1` candidate](https://github.com/red-cup-engineering/git-engineering-services-section/pull/122)
+owns *native Git tree/path/source semantics*; this provider adapter emits the
+separate, explicitly preliminary `github.archive-ref-source-observation/v1`
+source evidence through the **already existing CLI JSON result** and the
+existing reconciliation result API. It does not write an unconsumed tag
+inventory or invent an archival event.
+
+The source fields are deliberate: `refName` is the full standard Git ref;
+`gitObjectId` remains the actual lightweight commit OR annotated tag-object
+SHA; `peeledCommitId` is the contained commit if one can actually be
+authenticated through the bounded original GitHub tag chain;
+`observedBaseCommitId` is the exact original default-branch tip;
+`aheadCommitCount` and `behindCommitCount` describe only a technical
+comparison. Noncommit or unpeelable tags stay explicitly unresolved.
+`originalIssueReceiving`, `originalConsumerReceiving` and
+`automaticRefRetirementAllowed:false` prevent a label, Git ancestor test,
+agent note or a historically merged PR from masquerading as accepted Work.
+Annotated-tag messages are NOT evaluated as truth or permissions.
+
+A tag matching a contained branch's exact commit **holds that branch against
+automatic retirement** until the original independent Work and consumer
+receivers can reconcile its source. Explicit `--apply`, a green head, file
+equivalence, or the word "archive" does not override this. The existing
+GitHub Engineering branch/ref provider (not this observer) owns any eventual
+authorized leased ref retirement, after the original [Coesite source and
+consumer receiving](https://github.com/coesite-operations/operations-services-section).
+An ordinary contained branch with **no observed matching tag** follows the
+previous branch policy; this increment does not certify its Work as complete.
+
+A bounded **128-ref maximum per repository**, exact provider IDs, duplicate
+ref refusal, finite annotated-tag peeling, and complete compare reads turn
+missing rights or truncated/contradictory source into failed repository
+coverage, not a fabricated zero count. No provider mutation is performed for
+any tag. The exact source is available in the existing machine-readable CLI
+`archiveRefSources` array, plus
+`archiveTagSourcesObserved`/`archiveTagSourcesAwaitingReceiving` and an
+explicit `archiveRefCoverage` result. For each source tag, one existing
+`receive-archive-tag-source` action is emitted, always unapplied. This is
+a real upstream datum for original Git Engineering/Coesite issue and branch
+reconciliation, not a new issue, actor, office or source-acceptance event.
+
+**Issue processing:** with the already separate explicit `--close-issues`
+grant, the original GitHub API must now independently read back the actual
+closed issue `number`, `state`, and `state_reason` after a closure attempt
+before it counts `issuesClosed`. An unavailable/contradictory readback is
+a retained existing debt candidate, not an automatic blind retry or complete
+Semioverse Work. The ordinary original optional `--register DIR` still
+writes historical debt-register files and does **not** demonstrate an
+installed independent reader; the new tag source is intentionally consumed
+via original runtime JSON output instead of adding more orphan JSON.
+
 ## Classes and actions
 
 | Item | Test | Action |
