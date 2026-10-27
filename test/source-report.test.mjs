@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { admitGitHubReconciliationSource as admit } from "../src/source-report.mjs";
+import { briefGitHubReconciliationSource, briefGitHubSourceBatch } from "../src/source-brief.mjs";
 
 // Exact original Computer Engineering consumer profile: the producer and
 // actual reader must admit the SAME source-kind, Git refs and source counts.
@@ -157,4 +158,55 @@ test("a named foreign repository cannot be disguised as the observed original sc
   const report=profile();
   report.branchSourceCandidates[0].repositoryFullName="another/owner";
   assert.throws(()=>receive(report),/missing or incompatible/u);
+});
+
+
+test("an admitted compact source frame preserves all original GitHub source coordinates without treating them as Work", () => {
+  const original = profile();
+  const brief = briefGitHubReconciliationSource(original, { repository });
+  assert.equal(brief.recordKind, "github.reconciliation-source-brief/v1");
+  assert.deepEqual(brief.counts, {
+    originalIssues: 1, originalPullRequests: 1, originalBranches: 1, originalArchiveRefs: 1,
+  });
+  assert.equal(brief.repository, repository);
+  assert.equal(brief.issueSources[0].issueNumber, original.originalIssueSources[0].issueNumber);
+  assert.equal(brief.pullSources[0].sourceHeadCommitId, original.pullSourceCandidates[0].sourceHeadCommitId);
+  assert.equal(brief.pullSources[0].sourceHeadRefName, original.pullSourceCandidates[0].sourceHeadRefName);
+  assert.equal(brief.branchSources[0].headCommitId, original.branchSourceCandidates[0].headCommitId);
+  assert.equal(brief.branchSources[0].refName, original.branchSourceCandidates[0].refName);
+  assert.equal(brief.archiveRefSources[0].gitObjectId, original.archiveRefSources[0].gitObjectId);
+  assert.equal(brief.archiveRefSources[0].peeledCommitId, original.archiveRefSources[0].peeledCommitId);
+  assert.equal(brief.effectsAuthorized, false);
+  assert.equal(brief.originalWorkReceiving, "not-observed");
+  assert.ok(Buffer.byteLength(JSON.stringify(brief)) < Buffer.byteLength(JSON.stringify(original)),
+    "a context frame must be smaller than the full original report");
+});
+
+test("the compressed frame cannot launder forged GitHub relations, partial coverage, or Work authority", () => {
+  for (const tamper of [
+    source => { source.branchSourceCandidates[0].automaticRefRetirementAllowed = true; },
+    source => { source.pullSourceCandidates[0].automaticPullMergeAllowed = true; },
+    source => { source.archiveRefSources[0].gitObjectId = "not-a-real-object"; },
+    source => { source.sourceCutCoverage = "incomplete"; },
+    source => { source.branchSourceCandidateCount = 0; },
+  ]) {
+    const invalid = profile();
+    tamper(invalid);
+    assert.throws(() => briefGitHubReconciliationSource(invalid, { repository }));
+  }
+});
+
+test("compact batch preserves incomplete repository coverage and refuses disappearing failures", () => {
+  const frame = briefGitHubReconciliationSource(profile(), { repository });
+  const complete = briefGitHubSourceBatch({ expectedRepositories: 1, frames: [frame], errors: [] });
+  assert.equal(complete.sourceCutCoverage, "matching-open-github-source-cuts");
+  const partial = briefGitHubSourceBatch({ expectedRepositories: 2, frames: [frame],
+    errors: [{ repo: "other/repository", error: "GitHub source not readable" }] });
+  assert.equal(partial.sourceCutCoverage, "incomplete");
+  assert.equal(partial.repositoriesFailed, 1);
+  assert.equal(partial.errors[0].repo, "other/repository");
+  assert.throws(() => briefGitHubSourceBatch({ expectedRepositories: 2, frames: [frame], errors: [] }),
+    /every requested repository/);
+  assert.throws(() => briefGitHubSourceBatch({ expectedRepositories: 2, frames: [frame, frame], errors: [] }),
+    /every requested repository/);
 });
