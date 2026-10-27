@@ -3,6 +3,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '23 2,8,14,20 * * *'
 
 permissions:
   contents: read
@@ -20,3 +23,55 @@ jobs:
           node-version: "22"
       - name: Run deterministic source tests
         run: npm test
+
+  source-circulation:
+    # Scope only to the repository this Actions credential can actually read.
+    # The existing six-hour 561 Group systemd observer owns wider private estates.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact source implementation
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install supported Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+      - name: Admit current GitHub source and emit source-qualified brief
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node bin/github-reconcile.mjs \
+            --repo red-cup-engineering/github-reconciliation-service --brief > "$RUNNER_TEMP/github-source-brief.json"
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const source = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/github-source-brief.json", "utf8"));
+          if (source.recordKind !== "github.reconciliation-source-brief-batch/v1" ||
+              source.repositoriesObserved !== 1 || source.repositoriesFailed !== 0 ||
+              source.sourceCutCoverage !== "matching-open-github-source-cuts" ||
+              source.effectsAuthorized !== false ||
+              source.frames[0]?.repository !== "red-cup-engineering/github-reconciliation-service")
+            throw new Error("GitHub source pulse did not receive a complete original source cut");
+          console.log(JSON.stringify(source));
+          const counts = source.frames[0].counts;
+          const summary = [
+            "## Original GitHub source receiving",
+            "",
+            "Complete read-only cut of this repository, not settlement of original Work:",
+            "",
+            "- Open original issues: " + counts.originalIssues,
+            "- Open original PRs: " + counts.originalPullRequests,
+            "- Non-default source branches: " + counts.originalBranches,
+            "- Archive-named Git refs: " + counts.originalArchiveRefs,
+            "- Original Work/consumer receiving: not-observed",
+            "- Authority to merge/retire sources: none",
+          ];
+          const { appendFileSync } = await import("node:fs");
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary.join("\n") + "\n");
+          NODE
