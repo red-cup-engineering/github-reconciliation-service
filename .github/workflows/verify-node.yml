@@ -25,9 +25,10 @@ jobs:
         run: npm test
 
   source-circulation:
-    # Scope only to the repository this Actions credential can actually read.
-    # The existing six-hour 561 Group systemd observer owns wider private estates.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    # Three exact PUBLIC Red Cup source owners only. The CI token cannot
+    # inherit authority over the Group's private estate; systemd owns that.
+    # A failed source family makes the entire observed scope incomplete.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -52,30 +53,51 @@ jobs:
         run: |
           set -euo pipefail
           node bin/github-reconcile.mjs \
-            --repo red-cup-engineering/github-reconciliation-service --brief > "$RUNNER_TEMP/github-source-brief.json"
+            --repo red-cup-engineering/github-reconciliation-service \
+            --repo red-cup-engineering/flatfile-resource-graph-service \
+            --repo red-cup-engineering/paid-data-endpoint-service \
+            --brief > "$RUNNER_TEMP/github-source-brief.json"
           node --input-type=module <<'NODE'
           import { readFileSync } from "node:fs";
           const source = JSON.parse(readFileSync(process.env.RUNNER_TEMP + "/github-source-brief.json", "utf8"));
-          if (source.recordKind !== "github.reconciliation-source-brief-batch/v1" ||
-              source.repositoriesObserved !== 1 || source.repositoriesFailed !== 0 ||
-              source.sourceCutCoverage !== "matching-open-github-source-cuts" ||
-              source.effectsAuthorized !== false ||
-              source.frames[0]?.repository !== "red-cup-engineering/github-reconciliation-service")
-            throw new Error("GitHub source pulse did not receive a complete original source cut");
-          console.log(JSON.stringify(source));
-          const counts = source.frames[0].counts;
-          const summary = [
-            "## Original GitHub source receiving",
-            "",
-            "Complete read-only cut of this repository, not settlement of original Work:",
-            "",
-            "- Open original issues: " + counts.originalIssues,
-            "- Open original PRs: " + counts.originalPullRequests,
-            "- Non-default source branches: " + counts.originalBranches,
-            "- Archive-named Git refs: " + counts.originalArchiveRefs,
-            "- Original Work/consumer receiving: not-observed",
-            "- Authority to merge/retire sources: none",
+          const expected = [
+            "red-cup-engineering/flatfile-resource-graph-service",
+            "red-cup-engineering/github-reconciliation-service",
+            "red-cup-engineering/paid-data-endpoint-service",
           ];
+          const actual = (source.frames ?? []).map(frame => frame.repository).sort();
+          if (source.recordKind !== "github.reconciliation-source-brief-batch/v1" ||
+              source.repositoriesObserved !== expected.length || source.repositoriesFailed !== 0 ||
+              source.sourceCutCoverage !== "matching-open-github-source-cuts" ||
+              source.effectsAuthorized !== false || source.errors?.length !== 0 ||
+              JSON.stringify(actual) !== JSON.stringify(expected))
+            throw new Error("Public GitHub estate source cut incomplete or wrong owners");
+          const summary = [
+            "## Three original public GitHub source owners",
+            "",
+            "Exact source receipts, NOT independently accepted Work or GitHub mutation authority:",
+          ];
+          for (const frame of source.frames) {
+            const counts = frame.counts;
+            summary.push("",
+              "### " + frame.repository,
+              "- Open original issues: " + counts.originalIssues,
+              "- Open original PRs: " + counts.originalPullRequests,
+              "- Non-default source branches: " + counts.originalBranches,
+              "- Archive-named Git refs: " + counts.originalArchiveRefs);
+            console.log(JSON.stringify({ repository: frame.repository, counts }));
+          }
+          summary.push("",
+            "Original Work/consumer receiving: not-observed; authority to merge/retire sources: none.",
+            "The complete typed source reading is a retained CI artifact, never a separate Work ledger.");
           const { appendFileSync } = await import("node:fs");
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary.join("\n") + "\n");
           NODE
+      - name: Retain original public provider source observations for independent receiving
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: public-github-source-brief
+          path: ${{ runner.temp }}/github-source-brief.json
+          retention-days: 7
+          if-no-files-found: warn
