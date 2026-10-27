@@ -13,7 +13,8 @@
     "./equivalent-branch": "./src/equivalent-branch.mjs",
     "./receive-equivalent": "./src/receive-equivalent.mjs",
     "./archive-ref-observation": "./src/archive-ref-observation.mjs",
-    "./source-report": "./src/source-report.mjs"
+    "./source-report": "./src/source-report.mjs",
+    "./source-brief": "./src/source-brief.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
