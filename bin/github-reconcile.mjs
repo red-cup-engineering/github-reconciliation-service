@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * github-reconcile [--org NAME]... [--repo OWNER/NAME]...
- *                  [--receive-equivalent] [--max-equivalents N]
+ *                  [--receive-equivalent] [--max-equivalents N] [--brief]
  *
  * Reads the token from $GITHUB_TOKEN, or from the systemd credential `github-token`
  * ($CREDENTIALS_DIRECTORY). This entry is always a read-only source observer.
@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { createClient } from "../src/github-client.mjs";
 import { listRepos, reconcileRepo, summarize } from "../src/reconcile.mjs";
 import { admitGitHubReconciliationSource } from "../src/source-report.mjs";
+import { briefGitHubReconciliationSource, briefGitHubSourceBatch } from "../src/source-brief.mjs";
 
 const argv = process.argv.slice(2);
 if(argv.includes("--apply"))
@@ -20,7 +21,7 @@ if(argv.includes("--register"))
 const legacyFlags=new Set(["--min-age-days","--merge-green-pulls","--close-issues","--max-merges","--merge-method"]);
 for(const flag of argv) {
   if(legacyFlags.has(flag))throw new TypeError(flag+" refused: obsolete effect/debt selector; original read-only source has no such action");
-  if(flag.startsWith("--") && !["--repo","--org","--receive-equivalent","--max-equivalents"].includes(flag))
+  if(flag.startsWith("--") && !["--repo","--org","--receive-equivalent","--max-equivalents","--brief"].includes(flag))
     throw new TypeError("unknown GitHub source flag "+flag);
 }
 const values = (flag) => argv.flatMap((arg,i) => {
@@ -65,12 +66,15 @@ const reportOf = (readings, errors) => ({
   sourceCutCoverage:errors.length?"incomplete":"matching-open-github-source-cuts",
 });
 const results=[];
+const frames=[];
 for (const repo of repos) {
   try {
     const observed=await reconcileRepo(client,repo,options);
     if(observed.sourceCutCoverage!=="matching-open-github-source-cuts")
       throw new TypeError("original GitHub source cut incomplete");
-    admitGitHubReconciliationSource(reportOf([observed],[]),{repository:repo});
+    const source = reportOf([observed],[]);
+    admitGitHubReconciliationSource(source,{repository:repo});
+    if (argv.includes("--brief")) frames.push(briefGitHubReconciliationSource(source,{repository:repo}));
     results.push(observed);
   } catch (error) {
     console.error(`${repo}: ${error.message}`);
@@ -78,7 +82,9 @@ for (const repo of repos) {
   }
 }
 const errors=results.filter(r=>r.error).map(r=>({repo:r.repo,error:r.error}));
-console.log(JSON.stringify(reportOf(results,errors),null,2));
+console.log(JSON.stringify(argv.includes("--brief")
+  ? briefGitHubSourceBatch({ expectedRepositories: repos.length, frames, errors })
+  : reportOf(results,errors),null,2));
 // A partially observed repository estate is not a successful reconciliation.
 // Keep the machine-readable receipt on stdout, but fail the invoking job.
 if (errors.length) process.exitCode = 1;

@@ -60,6 +60,28 @@ globalThis.fetch = async (url, init) => {
     assert.equal(success.originalIssuesObserved,0);
     assert.equal(success.archiveTagSourcesObserved,0);
 
+    const compactProcess = spawnSync(process.execPath,
+      ["--import", preload, cli, "--repo", "o/r", "--brief"], {
+        encoding: "utf8", env: { ...process.env, GITHUB_TOKEN: "fixture-token" },
+      });
+    assert.equal(compactProcess.status, 0, compactProcess.stderr);
+    const compact = JSON.parse(compactProcess.stdout);
+    assert.equal(compact.recordKind, "github.reconciliation-source-brief-batch/v1");
+    assert.equal(compact.frames[0].repository, "o/r");
+    assert.equal(compact.frames[0].sourceCoverage, "complete-observed-repository-only");
+    assert.equal(compact.effectsAuthorized, false);
+    assert.equal(compact.frames[0].counts.originalBranches, 0);
+    assert.ok(Buffer.byteLength(compactProcess.stdout) < Buffer.byteLength(complete.stdout),
+      "a source-only context brief must be smaller than a full empty source report");
+
+    const incompleteBrief = spawnSync(process.execPath,
+      ["--import", preload, cli, "--repo", "o/r", "--repo", "x/y", "--brief"], {
+        encoding: "utf8", env: { ...process.env, GITHUB_TOKEN: "fixture-token" },
+      });
+    assert.equal(incompleteBrief.status, 1, incompleteBrief.stderr);
+    assert.equal(JSON.parse(incompleteBrief.stdout).sourceCutCoverage, "incomplete");
+    assert.equal(JSON.parse(incompleteBrief.stdout).errors[0].repo, "x/y");
+
     const mixed = invoke("o/r", "x/y");
     assert.equal(mixed.status, 1, mixed.stderr);
     assert.equal(mixed.error, undefined);

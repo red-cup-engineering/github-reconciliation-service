@@ -51,6 +51,48 @@ never a passed test, resolved issue or an authorized effect. Technical
 classifications and GitHub's current revision may each be useful evidence,
 but neither is a normative institutional acceptance decision.
 
+## Bounded source-context circulation (no frontier inference)
+
+The original six-hour systemd observer continues to emit the complete
+`github.reconciliation-source-report/v1` and is the source of full
+provider evidence. The same CLI can now produce a smaller reading:
+
+```sh
+github-reconcile --repo red-cup-engineering/github-reconciliation-service --brief
+```
+
+`--brief` **does not skip observation** or reduce GitHub source coverage.
+It first runs the complete original branch, issue, pull and archive-tag
+source cuts and admits each report through the **same**
+`admitGitHubReconciliationSource` contract as Computer Engineering.
+Only then does it project a `github.reconciliation-source-brief-batch/v1`
+with exact repository, full ref, immutable commit and Git object IDs,
+source classifications, CI evidence, Work questions and source-family counts.
+
+The brief reduces repeated metadata without shortening immutable source IDs,
+inventing a summary of unseen code, or inferring that a green pull request,
+archive tag, path mention or locally-contained branch received Work.
+The ordinary full CLI output remains unchanged without the option.
+An unreadable or moving repository appears as an explicit failure, forces
+`sourceCutCoverage: incomplete`, and makes the CLI exit nonzero. Consumers
+may reacquire the full provider report when deciding an actual mutation.
+
+`./source-brief` is the pure source-owned projector; it never performs a
+GitHub write and does not persist a shadow debt register. Its complete
+framed source reading is useful to L-Space/CAIRN, original MetroPlat
+Work receiving and compact agent context once a host explicitly installs
+those consumers. It is **not**, by itself, an L-Space publication or an
+authorized delegated worker.
+
+The repository's GitHub Actions workflow now has a separate zero-model
+six-hour **self-source circulation** job. Its repository-scoped GitHub
+Actions credential reads this repository's original GitHub sources,
+produces the compact read-only frame and refuses an incomplete source cut.
+This is independent of the institution-wide systemd timer, whose installed
+host status must be verified separately. Logs and an Actions job summary
+show what remains to be received; neither means that any PR, issue or
+branch has been automatically integrated.
+
 ## Unprocessed source behind archive-named tags
 
 This is an **existing original GitHub Work and source receiver**, not a second
