@@ -23,6 +23,7 @@ globalThis.fetch = async (url, init) => {
     "/repos/o/r/pulls": [],
     "/repos/o/r/issues": [],
     "/repos/o/r/git/matching-refs/tags/archive/": [],
+    "/repos/o/r/git/matching-refs/archive/": [],
     "/repos/o/r/git/ref/heads/main": {ref:"refs/heads/main",object:{type:"commit",sha:"a".repeat(40)}}
   };
   const allowed = init.method === "GET" && Object.hasOwn(routes, path);
