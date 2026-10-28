@@ -11,6 +11,7 @@
  */
 const GIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const PREFIX = "refs/tags/archive/";
+const CUSTOM_PREFIX = "refs/archive/";
 const MAX_REFS = 128;
 const isObject = v => v !== null && typeof v === "object" && !Array.isArray(v);
 const objectKinds = new Set(["commit", "tag", "tree", "blob"]);
@@ -37,35 +38,43 @@ function nameOf(tagRef, prefix = PREFIX) {
  *
  * @returns {Promise<ReadonlyArray<Readonly<object>>>}
  */
-export async function observeArchiveRefSources(client,{repository,repositoryId,observedBaseCommitId,observedBaseRefName,maxRefs=MAX_REFS}) {
+export async function observeArchiveRefSources(client,{repository,repositoryId,observedBaseCommitId,observedBaseRefName,maxRefs=MAX_REFS,includeCustomRefs=false}) {
   const escapedRepo = repoPath(repository);
   if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0 ||
       !GIT_OID.test(observedBaseCommitId))
     throw new TypeError("source repo numeric ID and exact observed base commit required");
-  if (!Number.isSafeInteger(maxRefs) || maxRefs < 1 || maxRefs > MAX_REFS)
+  if (typeof includeCustomRefs !== "boolean" || !Number.isSafeInteger(maxRefs) || maxRefs < 1 || maxRefs > MAX_REFS)
     throw new RangeError("archive ref source limit must be 1..128");
   // A commit ID alone does not prove the default Git ref stayed at that ID.
   nameOf({ref:observedBaseRefName}, "refs/heads/");
+  // Git Engineering's original source form distinguishes ordinary archive
+  // tags from custom refs/archive; neither namespace implies retirement.
+  const namespaces=includeCustomRefs ? [PREFIX,CUSTOM_PREFIX] : [PREFIX];
   const readInventory = async () => {
-    const refs = await client.request("GET", `/repos/${escapedRepo}/git/matching-refs/tags/archive/`);
-    if (!Array.isArray(refs) || refs.length > maxRefs)
-      throw new RangeError("GitHub archive reference inventory incomplete or unbounded");
-    const names = new Set();
-    const sorted = [...refs].sort((a,b)=>String(a?.ref).localeCompare(String(b?.ref)));
-    // Reject malformed or duplicate refs before relying on the source reading.
-    return sorted.map(ref=>{
-      const refName=nameOf(ref);
+    const groups=await Promise.all(namespaces.map(async prefix=>{
+      const api=prefix===PREFIX?"tags/archive/":"archive/";
+      const refs=await client.request("GET",`/repos/${escapedRepo}/git/matching-refs/${api}`);
+      if(!Array.isArray(refs) || refs.length>maxRefs)
+        throw new RangeError("GitHub archive reference inventory incomplete or unbounded");
+      return refs.map(ref=>({ref,prefix}));
+    }));
+    if(groups.reduce((count,group)=>count+group.length,0)>maxRefs)
+      throw new RangeError("Combined original Git archive namespaces exceed the census bound");
+    const names=new Set();
+    const sorted=groups.flat().sort((a,b)=>String(a.ref?.ref).localeCompare(String(b.ref?.ref)));
+    return sorted.map(({ref,prefix})=>{
+      const refName=nameOf(ref,prefix);
       if(names.has(refName) || !exact(ref.object?.type,ref.object?.sha))
         throw new TypeError("duplicate or malformed GitHub archive ref observation");
       names.add(refName);
-      return {ref,refName};
+      return {ref,refName,prefix};
     });
   };
   const admitted = await readInventory();
   const identity = rows => JSON.stringify(rows.map(({ref,refName})=>
     [refName,ref.object.type,ref.object.sha]));
   const observations = [];
-  for(const {ref,refName} of admitted){
+  for(const {ref,refName,prefix} of admitted){
     const gitObjectId = ref.object.sha;
     const gitObjectKind = ref.object.type;
     let cursor = ref.object,peeledCommitId = null;
@@ -81,7 +90,7 @@ export async function observeArchiveRefSources(client,{repository,repositoryId,o
       const tag=await client.request("GET",`/repos/${escapedRepo}/git/tags/${cursor.sha}`);
       if(!isObject(tag) || tag.sha!==cursor.sha ||
          !exact(tag.object?.type,tag.object?.sha) ||
-         (depth===0 && tag.tag!==refName.slice("refs/tags/".length)))
+         (depth===0 && prefix===PREFIX && tag.tag!==refName.slice("refs/tags/".length)))
         throw new TypeError("GitHub annotated tag readback identity mismatch");
       cursor=tag.object;
     }
