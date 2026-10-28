@@ -210,3 +210,32 @@ test("compact batch preserves incomplete repository coverage and refuses disappe
   assert.throws(() => briefGitHubSourceBatch({ expectedRepositories: 2, frames: [frame, frame], errors: [] }),
     /every requested repository/);
 });
+
+test("original refs/archive is a distinct admitted Git source rather than a renamed tag or completed Work", () => {
+  const report = profile();
+  const archived = "refs/archive/2026-10-11/engineering-unreceived";
+  report.archiveRefSources[0].refName = archived;
+  report.branchSourceCandidates[0].matchingArchiveRefNames = [archived];
+  const received = receive(report);
+  assert.equal(received.archiveSources.length, 1);
+  assert.equal(received.archiveSources[0].refName, archived);
+  assert.equal(received.archiveSources[0].gitObjectId, sha("b"));
+  assert.equal(received.archiveSources[0].automaticRefRetirementAllowed, false);
+  assert.deepEqual(received.branchSources[0].matchingArchiveRefNames, [archived]);
+  const brief = briefGitHubReconciliationSource(report, { repository });
+  assert.equal(brief.archiveRefSources[0].refName, archived);
+  assert.equal(brief.effectsAuthorized, false);
+});
+
+test("custom Git ref lookalikes and invalid namespace prefixes cannot receive a native source claim", () => {
+  for (const wrong of [
+    "refs/archive/../unread", "refs/archive/.hidden",
+    "refs/archive/false.lock", "refs/tags/not-archive/old",
+    "refs/archive/", "refs/archive/part//name", "refs/heads/archive/forged",
+  ]) {
+    const report = profile();
+    report.archiveRefSources[0].refName = wrong;
+    report.branchSourceCandidates[0].matchingArchiveRefNames = [wrong];
+    assert.throws(() => receive(report), /incompatible typed GitHub source/);
+  }
+});
