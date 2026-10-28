@@ -238,11 +238,11 @@ export async function reconcileRepo(client, repo, options = {}) {
   // An archive-named tag is NOT an archive receipt or supersession decision.
   const sourceObservations = await observeArchiveRefSources(client,{
     repository:repo,repositoryId:info.id,observedBaseCommitId:originalDefaultHead,
-    observedBaseRefName:"refs/heads/"+defaultBranch,
+    observedBaseRefName:"refs/heads/"+defaultBranch,includeCustomRefs:true,
   });
   const tagCommitHeads = new Set(sourceObservations.map(x=>x.peeledCommitId).filter(Boolean));
   for(const observed of sourceObservations){
-    note("receive-archive-tag-source",observed.refName,{
+    note("receive-archive-ref-source",observed.refName,{
       refObjectId:observed.gitObjectId,
       peeledCommitId:observed.peeledCommitId,
       technicalRelation:observed.technicalRelation,
