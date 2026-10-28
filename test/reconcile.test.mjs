@@ -720,6 +720,7 @@ test("stable complete source cuts report bounded coverage without treating Work 
 
 test("one original refs/archive Git object enters the existing source and branch graph without authorizing effects", async () => {
   const routes = world(), sha = "d".repeat(40);
+  routes["LIST /repos/o/r/branches"][1].commit.sha = sha;
   const refName = "refs/archive/2026-10-11/unreceived-original-work";
   routes["GET /repos/o/r/git/matching-refs/archive/"] = [
     { ref: refName, object: { type: "commit", sha } },
