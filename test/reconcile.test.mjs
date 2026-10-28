@@ -117,6 +117,7 @@ const world = () => ({
     { name: "pr-green", protected: false, commit: { sha: "1111111111111111111111111111111111111111" } },
   ],
   "GET /repos/o/r/git/matching-refs/tags/archive/": [],
+  "GET /repos/o/r/git/matching-refs/archive/": [],
   "GET /repos/o/r/git/ref/heads/main": {ref:"refs/heads/main",object:{type:"commit",sha:"a".repeat(40)}},
   "LIST /repos/o/r/pulls?state=open": [
     { id:5005, number: 5, head: { ref: "pr-green", sha: "1111111111111111111111111111111111111111", repo:{id:12345,full_name:"o/r"} } },
@@ -715,4 +716,34 @@ test("stable complete source cuts report bounded coverage without treating Work 
   assert.equal(read.originalIssueSources.length,3);
   assert.equal(read.originalWorkReceiving,"not-observed");
   assert.deepEqual(writes,[]);
+});
+
+test("one original refs/archive Git object enters the existing source and branch graph without authorizing effects", async () => {
+  const routes = world(), sha = "d".repeat(40);
+  const refName = "refs/archive/2026-10-11/unreceived-original-work";
+  routes["GET /repos/o/r/git/matching-refs/archive/"] = [
+    { ref: refName, object: { type: "commit", sha } },
+  ];
+  routes["GET /repos/o/r/compare/" + "a".repeat(40) + "..." + sha] =
+    { ahead_by: 2, behind_by: 5, status: "diverged" };
+  const { client, writes } = fake(routes);
+  const observed = await reconcileRepo(client, repo, { now: NOW });
+  assert.equal(observed.sourceObservations.length, 1);
+  const original = observed.sourceObservations[0];
+  assert.equal(original.refName, refName);
+  assert.equal(original.gitObjectId, sha);
+  assert.equal(original.technicalRelation, "divergent-source-history");
+  assert.equal(original.independentReceivingRequired, true);
+  assert.equal(original.automaticRefRetirementAllowed, false);
+  assert.deepEqual(observed.sourceCandidates.find(x =>
+    x.refName === "refs/heads/done").matchingArchiveRefNames, [refName]);
+  assert.equal(summarize([observed]).archiveTagSourcesObserved, 1);
+  assert.deepEqual(writes, []);
+});
+
+test("unavailable original custom Git namespace cannot be misreported as an empty source inventory", async () => {
+  const routes = world();
+  delete routes["GET /repos/o/r/git/matching-refs/archive/"];
+  await assert.rejects(reconcileRepo(fake(routes).client, repo, { now: NOW }),
+    /no route|matching-refs\/archive/u);
 });
