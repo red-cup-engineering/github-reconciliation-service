@@ -24,6 +24,11 @@ const CHECK_STATES = new Set(["passing","failing","pending","none","inconclusive
 const gitBranchRef = value => typeof value === "string" &&
   /^refs\/heads\/[A-Za-z0-9_][-A-Za-z0-9_./]*$/u.test(value) &&
   !/\.\.|@\{|\/\/|\/$|\.$|(?:^|\/)\.|\.lock(?:\/|$)/u.test(value);
+// An actual refs/archive ref and an archive-named tag are different Git
+// source coordinates. Reuse the existing normalized Git ref grammar for both.
+const gitArchiveRef = value => typeof value === "string" &&
+  ["refs/archive/", "refs/tags/archive/"].some(prefix =>
+    value.startsWith(prefix) && gitBranchRef("refs/heads/" + value.slice(prefix.length)));
 const positiveNumbers = values => Array.isArray(values) &&
   values.every((number,index) => Number.isSafeInteger(number) && number > 0 &&
     (index === 0 || values[index-1] < number));
@@ -87,7 +92,7 @@ export function admitGitHubReconciliationSource(report,{repository}={}) {
       x.originalWorkReceiving === "not-observed" && x.ordinaryConsumerReceiving === "not-observed");
   const archiveSources = rows(report, "archiveRefSources", "github.archive-ref-source-observation/v1",
     x => x.repository === repository && Number.isSafeInteger(x.repositoryId) && x.repositoryId > 0 &&
-      typeof x.refName === "string" && x.refName.startsWith("refs/tags/archive/") &&
+      gitArchiveRef(x.refName) &&
       OID.test(x.gitObjectId ?? "") && (x.peeledCommitId === null || OID.test(x.peeledCommitId ?? "")) &&
       TAG_RELATIONS.has(x.technicalRelation) && x.automaticRefRetirementAllowed === false &&
       x.independentReceivingRequired === true &&
