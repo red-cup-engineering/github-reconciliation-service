@@ -148,6 +148,31 @@ explicit `archiveRefCoverage` result. For each source tag, one existing
 a real upstream datum for original Git Engineering/Coesite issue and branch
 reconciliation, not a new issue, actor, office or source-acceptance event.
 
+## Native custom Git archive refs are first-class original source
+
+The original source observer now reads **both** `refs/tags/archive/*` and
+`refs/archive/*` through its existing source-reconciliation path. These are
+distinct Git namespaces; `refs/archive/*` is not a Git annotated tag merely
+because an agent called it an archive. The same bounded 128-ref budget,
+immutable object and peeled-commit distinction, independent Git comparison,
+duplicate refusal, two complete inventory observations, and default-branch
+identity readback apply across both namespaces.
+
+`archiveRefSources` retains the original full ref names; its historical
+`archiveTagSourcesObserved` counter measures *all* observed archive source
+refs and does not imply a tag object or a completed archival disposition.
+The original native consumer admits either precise namespace, and branch
+matching retains directed source relations without inventing Work acceptance.
+This implementation has **no write permission** or archive-retirement path.
+
+The original host must select and receive the complete source frame through
+CAIRN/SignCraft, then independently qualify original consumer Work before
+performing any Git effect. Native source tests verify missing-namespace
+refusal, changed ref identity, global census bound and a nonretirable
+historical branch. The known `refs/archive/*` owners include
+`561-group/internal-services-section` and original Git/GitHub Engineering.
+No observed ref is automatically deleted or treated as a software release.
+
 ## Branch-to-PR evidence is a Git relation, not a short-name guess
 
 The original branch source reader previously treated an open PR's unqualified
